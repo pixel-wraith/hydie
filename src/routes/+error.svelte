@@ -3,26 +3,26 @@
 </script>
 
 <div class="error-container">
-    <h1>{page.status}</h1>
+	<h1>{page.status}</h1>
 
-    <p>{page.error?.message}</p>
+	<p>{page.error?.message}</p>
 </div>
 
 <style>
-    .error-container {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding-top: 20vh;
-    }
+	.error-container {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding-top: 20vh;
+	}
 
-    h1 {
-        margin-bottom: 2rem;
-        font-size: 4rem;
-    }
+	h1 {
+		margin-bottom: 2rem;
+		font-size: 4rem;
+	}
 
-    p {
-        margin-top: 0;
-    }
+	p {
+		margin-top: 0;
+	}
 </style>

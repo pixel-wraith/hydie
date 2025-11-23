@@ -2,7 +2,6 @@
 
 How's Your Development Involvement and Engagement
 
-
 ## Setup
 
 1. run `git clone https://github.com/iamthe-Wraith/hydie.git`
@@ -19,11 +18,12 @@ How's Your Development Involvement and Engagement
 
 7. open you browser and visit `http://localhost:5173/`
 
-
 ## Environment Variables
+
 Below are instructions on where to find the values you'll need for your environment variables.
 
 ### `GITHUB_OWNER`
+
 The username or organization name of the owner of the repo to pull data from.
 
 If the repo is owned by an individual user, you can find their name in their url. Visit the user's GitHub profile and copy the url. Mine is `https://github.com/iamthe-Wraith`. Now copy the value found after `https://github.com` and remove any leading or trailing `/`'s. This is the value to set for the `GITHUB_OWNER` environment variable.
@@ -31,11 +31,13 @@ If the repo is owned by an individual user, you can find their name in their url
 If the repo is owned by an organization, the process is the same. Go to the organization's GitHub profile and copy the url. One of my organization's urls is `https://github.com/BuzyBee-Buzz/`. Now copy the value found after `https://github.com` and remove any leading or trailing `/`'s. This is the value to set for the `GITHUB_OWNER` environment variable.
 
 ### `GITHUB_REPO`
+
 The name of the GitHub repository to pull data from.
 
 To find this value, visit the repo in the browser and copy the url. The url for this repo is `https://github.com/iamthe-Wraith/hydie`...that end part (`hydie`) is the name of the repo.
 
 ### `GITHUB_TOKEN`
+
 This is your access token that will grant your requests access. To create an access token...
 
 1. login to GitHub
@@ -52,4 +54,4 @@ This is your access token that will grant your requests access. To create an acc
 12. copy the personal access token once it's displayed in the UI (make sure to do this, once you leave the page you cannot access this token again and will have to re-generate the token)
 13. paste the personal access token as the value for the `GITHUB_TOKEN` environment variable
 
-*💾 Don't forget to Save the changes you make to the `.env` file.*
+_💾 Don't forget to Save the changes you make to the `.env` file._

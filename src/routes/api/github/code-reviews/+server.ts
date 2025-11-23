@@ -4,13 +4,16 @@ import { ApiResponse } from '$lib/utils/api-response';
 import { error, json } from '@sveltejs/kit';
 
 export const GET = async () => {
-    try {
-        const code_review_service = new CodeReviewsService();
-        const data = await code_review_service.get_synced_data();
+	try {
+		const code_review_service = new CodeReviewsService();
+		const data = await code_review_service.get_synced_data();
 
-        return json(data);
-    } catch (err: unknown) {
-        const response = new ApiResponse({ errors: ApiError.parse(err) });
-        return error(response.status_code, response.errors?.[0]?.message || 'An unknown error occurred');
-    }
+		return json(data);
+	} catch (err: unknown) {
+		const response = new ApiResponse({ errors: ApiError.parse(err) });
+		return error(
+			response.status_code,
+			response.errors?.[0]?.message || 'An unknown error occurred'
+		);
+	}
 };

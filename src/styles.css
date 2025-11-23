@@ -61,7 +61,7 @@ body {
 	--primary-300: oklch(70.88% 0.2146 129.88);
 	--primary-400: oklch(80% 0.2343 129.88);
 	--primary-500: oklch(91.04% 0.2442 129.88);
-    --primary-600: oklch(91.97% 0.2014 129.88);
+	--primary-600: oklch(91.97% 0.2014 129.88);
 	--primary-700: oklch(94.03% 0.1546 129.88);
 	--primary-800: oklch(95.21% 0.1176 129.88);
 	--primary-900: oklch(96.97% 0.0682 129.88);
@@ -101,7 +101,7 @@ body {
 
 	--outline-offset: 3px;
 
-    min-height: 100dvh;
+	min-height: 100dvh;
 	background-color: var(--neutral-100);
 }
 
@@ -141,10 +141,11 @@ body * {
 	font-size: 1rem;
 	font-weight: 300;
 	letter-spacing: 0.025rem;
-	transition: color 0.15s ease-in-out,
-				background-color 0.15s ease-in-out,
-				border-color 0.15s ease-in-out,
-				opacity 0.15s ease-in-out;
+	transition:
+		color 0.15s ease-in-out,
+		background-color 0.15s ease-in-out,
+		border-color 0.15s ease-in-out,
+		opacity 0.15s ease-in-out;
 
 	&::-webkit-scrollbar {
 		width: 6px;

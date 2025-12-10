@@ -375,8 +375,7 @@ export class CodeReviewsService {
 				return reviewDate >= new Date(startDate);
 			});
 
-			// Process reviews by user and date, excluding reviews on excluded PRs
-			// where the reviewer is also the PR author
+			// Process reviews by user and date, excluding self-reviews
 			const userStats: Record<string, Record<string, number>> = {};
 
 			reviews.forEach((review: Review) => {
@@ -387,13 +386,12 @@ export class CodeReviewsService {
 						? parseInt(review.pull_request_url.split('/').pop() || '0')
 						: 0;
 
-					// Skip if this is an excluded PR and the reviewer is the author
-					if (excludedPRs.has(prNumber)) {
-						const prAuthor = prAuthorMap.get(prNumber);
-						if (prAuthor === username) {
-							console.log(`Skipping review by ${username} on excluded PR #${prNumber}`);
-							return;
-						}
+					const prAuthor = prAuthorMap.get(prNumber);
+
+					// Skip self-reviews (reviews on the reviewer's own PR)
+					if (prAuthor === username) {
+						console.log(`Skipping self-review by ${username} on their own PR #${prNumber}`);
+						return;
 					}
 
 					if (!userStats[username]) {

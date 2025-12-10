@@ -127,7 +127,11 @@
 
 					<div class="pr-list">
 						{#each pr_groups[author] as pr (pr.number)}
-							<div class="pr-item" class:excluded={excluded.has(pr.number)}>
+							<div
+								class="pr-item"
+								class:excluded={excluded.has(pr.number)}
+								class:large-pr={pr.additions + pr.deletions > 1000}
+							>
 								<label class="pr-checkbox">
 									<input
 										type="checkbox"
@@ -268,6 +272,11 @@
 		border: 1px solid var(--neutral-200);
 		border-radius: 0.25rem;
 		transition: background-color 0.15s ease;
+
+		&.large-pr {
+			border-color: var(--danger-500);
+			border-width: 2px;
+		}
 
 		&.excluded {
 			background-color: var(--neutral-100);

@@ -10,10 +10,59 @@ describe('/+page.svelte', () => {
 				data: {
 					status: 'not-synced',
 					last_synced: null,
-					data: {}
+					data: {},
+					pr_sizes: {}
 				}
 			}
 		});
 		expect(screen.getByText('Code reviews have not been synced yet.')).toBeInTheDocument();
+	});
+
+	test('should render PR sizes section when pr_sizes data exists', () => {
+		render(Page, {
+			props: {
+				data: {
+					status: 'synced',
+					last_synced: '2025-12-09T12:00:00Z',
+					data: {
+						testuser: {
+							'2025-12-09': 1,
+							'2025-12-08': 2
+						}
+					},
+					pr_sizes: {
+						testuser: {
+							min: 10,
+							max: 100,
+							avg: 55,
+							pr_count: 3
+						}
+					}
+				}
+			}
+		});
+		expect(screen.getByText('Average PR Size (Lines Changed)')).toBeInTheDocument();
+		expect(
+			screen.getByText('PR size statistics for each contributor over the last 14 days')
+		).toBeInTheDocument();
+	});
+
+	test('should not render PR sizes section when pr_sizes is empty', () => {
+		render(Page, {
+			props: {
+				data: {
+					status: 'synced',
+					last_synced: '2025-12-09T12:00:00Z',
+					data: {
+						testuser: {
+							'2025-12-09': 1,
+							'2025-12-08': 2
+						}
+					},
+					pr_sizes: {}
+				}
+			}
+		});
+		expect(screen.queryByText('Average PR Size (Lines Changed)')).not.toBeInTheDocument();
 	});
 });

@@ -4,10 +4,11 @@ import type { RestEndpointMethodTypes } from '@octokit/rest';
 import { Logger } from './logger';
 import { GITHUB_OWNER, GITHUB_REPO, GITHUB_TOKEN } from '$env/static/private';
 import { ApiError } from '$lib/utils/api-error';
-import type { ICodeReviewsData } from '../../types';
+import type { ICodeReviewsData, IPRSizeStats } from '../../types';
 import type { NumericRange } from '@sveltejs/kit';
 
 type PullRequest = RestEndpointMethodTypes['pulls']['list']['response']['data'][number];
+type PullRequestDetail = RestEndpointMethodTypes['pulls']['get']['response']['data'];
 type Review = RestEndpointMethodTypes['pulls']['listReviews']['response']['data'][number];
 
 export class CodeReviewsService {
@@ -36,19 +37,26 @@ export class CodeReviewsService {
 	public async get_synced_data(): Promise<ICodeReviewsData> {
 		try {
 			if (fs.existsSync(this.file_name)) {
-				return JSON.parse(fs.readFileSync(this.file_name, 'utf8'));
+				const data = JSON.parse(fs.readFileSync(this.file_name, 'utf8'));
+				// Ensure pr_sizes exists for backwards compatibility
+				if (!data.pr_sizes) {
+					data.pr_sizes = {};
+				}
+				return data;
 			} else {
 				fs.writeFileSync(
 					this.file_name,
 					JSON.stringify({
 						last_synced: null,
 						status: 'not-synced',
-						data: {}
+						data: {},
+						pr_sizes: {}
 					})
 				);
 
 				return {
 					data: {},
+					pr_sizes: {},
 					status: 'not-synced',
 					last_synced: null
 				};
@@ -75,11 +83,13 @@ export class CodeReviewsService {
 			fs.writeFileSync(this.file_name, JSON.stringify(data));
 
 			const code_reviews = await this.get_code_reviews();
+			const pr_sizes = await this.get_pr_sizes();
 
 			data = {
 				last_synced: new Date().toISOString(),
 				status: 'synced',
-				data: code_reviews
+				data: code_reviews,
+				pr_sizes: pr_sizes
 			};
 
 			fs.writeFileSync(this.file_name, JSON.stringify(data));
@@ -87,6 +97,12 @@ export class CodeReviewsService {
 			return data;
 		} catch (error) {
 			Logger.error(error);
+			// Reset status to error so user can retry
+			const errorData: ICodeReviewsData = {
+				...(await this.get_synced_data()),
+				status: 'error'
+			};
+			fs.writeFileSync(this.file_name, JSON.stringify(errorData));
 			throw error;
 		}
 	}
@@ -257,5 +273,106 @@ export class CodeReviewsService {
 			}
 			throw new ApiError((error as Error).message, 500);
 		}
+	};
+
+	private get_pr_sizes = async (): Promise<Record<string, IPRSizeStats>> => {
+		try {
+			const dates = this.get_date_range();
+			const startDate = this.format_date_for_query(dates[0]);
+
+			console.log('Fetching PR sizes... This may take a moment...');
+
+			// Get recent PRs (updated in the last 14 days)
+			const recentPRs = await this.get_recent_pull_requests(startDate);
+			console.log('Recent PRs fetched:', recentPRs.length);
+
+			// Fetch detailed PR info to get additions/deletions
+			const prDetails = await this.fetch_pr_details_in_parallel(recentPRs);
+			console.log('PR details fetched:', prDetails.length);
+
+			// Group PRs by author and calculate stats
+			const prsByAuthor: Record<string, number[]> = {};
+
+			for (const pr of prDetails) {
+				const author = pr.user?.login;
+				if (!author) {
+					console.log('Skipping PR with no author:', pr.number);
+					continue;
+				}
+
+				const size = (pr.additions ?? 0) + (pr.deletions ?? 0);
+				console.log(`PR #${pr.number} by ${author}: ${size} lines (${pr.additions} + ${pr.deletions})`);
+
+				if (!prsByAuthor[author]) {
+					prsByAuthor[author] = [];
+				}
+				prsByAuthor[author].push(size);
+			}
+			console.log('Authors with PRs:', Object.keys(prsByAuthor));
+
+			// Calculate min, max, avg for each author
+			const result: Record<string, IPRSizeStats> = {};
+
+			for (const [author, sizes] of Object.entries(prsByAuthor)) {
+				if (sizes.length === 0) continue;
+
+				const min = Math.min(...sizes);
+				const max = Math.max(...sizes);
+				const avg = Math.round(sizes.reduce((sum, s) => sum + s, 0) / sizes.length);
+
+				result[author] = {
+					min,
+					max,
+					avg,
+					pr_count: sizes.length
+				};
+			}
+
+			return result;
+		} catch (error: unknown) {
+			Logger.error(error);
+			if (error instanceof Error && 'status' in error && error.status === 404) {
+				throw new ApiError(
+					'Repository not found. Please check if the organization and repository names are correct.',
+					404
+				);
+			}
+			if (error instanceof Error && 'status' in error && error.status === 403) {
+				throw new ApiError(
+					'API rate limit exceeded or insufficient permissions. Please check your token has the necessary permissions.',
+					403
+				);
+			}
+			if (error instanceof Error && 'status' in error && error.status === 401) {
+				throw new ApiError('Invalid token. Please check your token is correct.', 401);
+			}
+			if (error instanceof Error && 'status' in error) {
+				throw new ApiError((error as Error).message, error.status as NumericRange<200, 599>);
+			}
+			throw new ApiError((error as Error).message, 500);
+		}
+	};
+
+	private fetch_pr_details_in_parallel = async (
+		pullRequests: PullRequest[]
+	): Promise<PullRequestDetail[]> => {
+		const BATCH_SIZE = 10;
+		const allDetails: PullRequestDetail[] = [];
+
+		for (let i = 0; i < pullRequests.length; i += BATCH_SIZE) {
+			const batch = pullRequests.slice(i, i + BATCH_SIZE);
+			const batchResults = await Promise.all(
+				batch.map((pr) =>
+					this.octokit.rest.pulls.get({
+						owner: GITHUB_OWNER,
+						repo: GITHUB_REPO,
+						pull_number: pr.number
+					})
+				)
+			);
+			allDetails.push(...batchResults.map((r) => r.data));
+		}
+
+		return allDetails;
 	};
 }

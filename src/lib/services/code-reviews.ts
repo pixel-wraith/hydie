@@ -2,9 +2,10 @@ import fs from 'fs';
 import { Octokit } from '@octokit/rest';
 import type { RestEndpointMethodTypes } from '@octokit/rest';
 import { Logger } from './logger';
+import { ExclusionsService } from './exclusions';
 import { GITHUB_OWNER, GITHUB_REPO, GITHUB_TOKEN } from '$env/static/private';
 import { ApiError } from '$lib/utils/api-error';
-import type { ICodeReviewsData, IPRSizeStats } from '../../types';
+import type { ICodeReviewsData, IPRSizeStats, IPullRequestInfo } from '../../types';
 import type { NumericRange } from '@sveltejs/kit';
 
 type PullRequest = RestEndpointMethodTypes['pulls']['list']['response']['data'][number];
@@ -42,6 +43,10 @@ export class CodeReviewsService {
 				if (!data.pr_sizes) {
 					data.pr_sizes = {};
 				}
+				// Ensure pull_requests exists for backwards compatibility
+				if (!data.pull_requests) {
+					data.pull_requests = [];
+				}
 				return data;
 			} else {
 				fs.writeFileSync(
@@ -50,13 +55,15 @@ export class CodeReviewsService {
 						last_synced: null,
 						status: 'not-synced',
 						data: {},
-						pr_sizes: {}
+						pr_sizes: {},
+						pull_requests: []
 					})
 				);
 
 				return {
 					data: {},
 					pr_sizes: {},
+					pull_requests: [],
 					status: 'not-synced',
 					last_synced: null
 				};
@@ -82,14 +89,29 @@ export class CodeReviewsService {
 
 			fs.writeFileSync(this.file_name, JSON.stringify(data));
 
-			const code_reviews = await this.get_code_reviews();
-			const pr_sizes = await this.get_pr_sizes();
+			// Get exclusions
+			const exclusions_service = new ExclusionsService();
+			const excluded_prs = await exclusions_service.get_excluded_set();
+
+			// Fetch PR details first (needed for both code_reviews and pr_sizes)
+			const dates = this.get_date_range();
+			const startDate = this.format_date_for_query(dates[0]);
+			const recentPRs = await this.get_recent_pull_requests(startDate);
+			const prDetails = await this.fetch_pr_details_in_parallel(recentPRs);
+
+			// Extract PR info for storage (all PRs, not filtered)
+			const pull_requests = this.extract_pr_info(prDetails);
+
+			// Calculate stats with exclusions applied
+			const code_reviews = await this.get_code_reviews(excluded_prs, prDetails);
+			const pr_sizes = this.calculate_pr_sizes(prDetails, excluded_prs);
 
 			data = {
 				last_synced: new Date().toISOString(),
 				status: 'synced',
 				data: code_reviews,
-				pr_sizes: pr_sizes
+				pr_sizes: pr_sizes,
+				pull_requests: pull_requests
 			};
 
 			fs.writeFileSync(this.file_name, JSON.stringify(data));
@@ -107,45 +129,166 @@ export class CodeReviewsService {
 		}
 	}
 
+	public async recalculate_with_exclusions(): Promise<ICodeReviewsData> {
+		try {
+			const file_data = await this.get_synced_data();
+
+			if (!file_data.pull_requests || file_data.pull_requests.length === 0) {
+				// No PR data to recalculate, return as-is
+				return file_data;
+			}
+
+			// Get current exclusions
+			const exclusions_service = new ExclusionsService();
+			const excluded_prs = await exclusions_service.get_excluded_set();
+
+			// Recalculate PR sizes from stored pull_requests
+			const pr_sizes = this.calculate_pr_sizes_from_stored(file_data.pull_requests, excluded_prs);
+
+			// For code reviews, we need to filter based on excluded PRs
+			// Since we don't store the PR number with each review, we'll recalculate
+			// by filtering the existing data based on excluded PR authors
+			const code_reviews = this.filter_code_reviews(
+				file_data.data,
+				file_data.pull_requests,
+				excluded_prs
+			);
+
+			const data: ICodeReviewsData = {
+				...file_data,
+				data: code_reviews,
+				pr_sizes: pr_sizes
+			};
+
+			fs.writeFileSync(this.file_name, JSON.stringify(data));
+
+			return data;
+		} catch (error) {
+			Logger.error(error);
+			throw error;
+		}
+	}
+
+	private extract_pr_info(prDetails: PullRequestDetail[]): IPullRequestInfo[] {
+		return prDetails.map((pr) => ({
+			number: pr.number,
+			title: pr.title,
+			html_url: pr.html_url,
+			author: pr.user?.login ?? 'unknown',
+			additions: pr.additions ?? 0,
+			deletions: pr.deletions ?? 0,
+			created_at: pr.created_at
+		}));
+	}
+
+	private calculate_pr_sizes(
+		prDetails: PullRequestDetail[],
+		excludedPRs: Set<number>
+	): Record<string, IPRSizeStats> {
+		const prsByAuthor: Record<string, number[]> = {};
+
+		for (const pr of prDetails) {
+			const author = pr.user?.login;
+			if (!author) {
+				console.log('Skipping PR with no author:', pr.number);
+				continue;
+			}
+
+			// Skip excluded PRs
+			if (excludedPRs.has(pr.number)) {
+				console.log(`Skipping excluded PR #${pr.number} by ${author}`);
+				continue;
+			}
+
+			const size = (pr.additions ?? 0) + (pr.deletions ?? 0);
+			console.log(
+				`PR #${pr.number} by ${author}: ${size} lines (${pr.additions} + ${pr.deletions})`
+			);
+
+			if (!prsByAuthor[author]) {
+				prsByAuthor[author] = [];
+			}
+			prsByAuthor[author].push(size);
+		}
+
+		return this.calculate_stats_from_sizes(prsByAuthor);
+	}
+
+	private calculate_pr_sizes_from_stored(
+		pullRequests: IPullRequestInfo[],
+		excludedPRs: Set<number>
+	): Record<string, IPRSizeStats> {
+		const prsByAuthor: Record<string, number[]> = {};
+
+		for (const pr of pullRequests) {
+			// Skip excluded PRs
+			if (excludedPRs.has(pr.number)) {
+				console.log(`Skipping excluded PR #${pr.number} by ${pr.author}`);
+				continue;
+			}
+
+			const size = pr.additions + pr.deletions;
+
+			if (!prsByAuthor[pr.author]) {
+				prsByAuthor[pr.author] = [];
+			}
+			prsByAuthor[pr.author].push(size);
+		}
+
+		return this.calculate_stats_from_sizes(prsByAuthor);
+	}
+
+	private calculate_stats_from_sizes(
+		prsByAuthor: Record<string, number[]>
+	): Record<string, IPRSizeStats> {
+		const result: Record<string, IPRSizeStats> = {};
+
+		for (const [author, sizes] of Object.entries(prsByAuthor)) {
+			if (sizes.length === 0) continue;
+
+			const min = Math.min(...sizes);
+			const max = Math.max(...sizes);
+			const avg = Math.round(sizes.reduce((sum, s) => sum + s, 0) / sizes.length);
+
+			result[author] = {
+				min,
+				max,
+				avg,
+				pr_count: sizes.length
+			};
+		}
+
+		return result;
+	}
+
+	private filter_code_reviews(
+		codeReviews: Record<string, Record<string, number>>,
+		pullRequests: IPullRequestInfo[],
+		excludedPRs: Set<number>
+	): Record<string, Record<string, number>> {
+		// Build a map of excluded PR authors
+		const excludedAuthors = new Set<string>();
+		for (const pr of pullRequests) {
+			if (excludedPRs.has(pr.number)) {
+				excludedAuthors.add(pr.author);
+			}
+		}
+
+		// If no PRs are excluded, return as-is
+		if (excludedAuthors.size === 0) {
+			return codeReviews;
+		}
+
+		// Note: This is a simplified approach. Since we don't track which reviews
+		// belong to which PRs, we cannot fully filter reviews on excluded PRs.
+		// The full filtering happens during sync when we have access to review data.
+		// For recalculation, we return the existing code reviews unchanged.
+		return codeReviews;
+	}
+
 	private format_date_for_query(date: string) {
 		return `${date}T00:00:00Z`;
 	}
-
-	private get_all_reviews = async (startDate: string): Promise<Review[]> => {
-		try {
-			// Get pull requests with early termination when we hit PRs older than our date range
-			const recentPRs = await this.get_recent_pull_requests(startDate);
-
-			// Fetch reviews for all PRs in parallel batches to respect rate limits
-			const allReviews = await this.fetch_reviews_in_parallel(recentPRs);
-
-			// Filter reviews by date
-			return allReviews.filter((review: Review) => {
-				const reviewDate = new Date(review.submitted_at!);
-				return reviewDate >= new Date(startDate);
-			});
-		} catch (error: unknown) {
-			if (error instanceof Error && 'status' in error && error.status === 404) {
-				throw new ApiError(
-					'Repository not found. Please check if the organization and repository names are correct.',
-					404
-				);
-			}
-			if (error instanceof Error && 'status' in error && error.status === 403) {
-				throw new ApiError(
-					'API rate limit exceeded or insufficient permissions. Please check your token has the necessary permissions.',
-					403
-				);
-			}
-			if (error instanceof Error && 'status' in error && error.status === 401) {
-				throw new ApiError('Invalid token. Please check your token is correct.', 401);
-			}
-			if (error instanceof Error && 'status' in error) {
-				throw new ApiError((error as Error).message, error.status as NumericRange<200, 599>);
-			}
-			throw new ApiError((error as Error).message, 500);
-		}
-	};
 
 	private get_recent_pull_requests = async (startDate: string): Promise<PullRequest[]> => {
 		const recentPRs: PullRequest[] = [];
@@ -201,7 +344,10 @@ export class CodeReviewsService {
 		return allReviews;
 	};
 
-	private get_code_reviews = async (): Promise<Record<string, Record<string, number>>> => {
+	private get_code_reviews = async (
+		excludedPRs: Set<number>,
+		prDetails: PullRequestDetail[]
+	): Promise<Record<string, Record<string, number>>> => {
 		try {
 			// First verify we have access to the repository
 			await this.verify_repository_access();
@@ -211,16 +357,45 @@ export class CodeReviewsService {
 
 			console.log('Fetching PR reviews... This may take a moment...');
 
-			// Get all PR reviews within the date range
-			const reviews = await this.get_all_reviews(startDate);
+			// Build a map of PR number to author for exclusion filtering
+			const prAuthorMap = new Map<number, string>();
+			for (const pr of prDetails) {
+				if (pr.user?.login) {
+					prAuthorMap.set(pr.number, pr.user.login);
+				}
+			}
 
-			// Process reviews by user and date
+			// Get all PR reviews within the date range
+			const recentPRs = await this.get_recent_pull_requests(startDate);
+			const allReviews = await this.fetch_reviews_in_parallel(recentPRs);
+
+			// Filter reviews by date
+			const reviews = allReviews.filter((review: Review) => {
+				const reviewDate = new Date(review.submitted_at!);
+				return reviewDate >= new Date(startDate);
+			});
+
+			// Process reviews by user and date, excluding reviews on excluded PRs
+			// where the reviewer is also the PR author
 			const userStats: Record<string, Record<string, number>> = {};
 
 			reviews.forEach((review: Review) => {
 				const reviewDate = review.submitted_at!.split('T')[0];
 				if (reviewDate >= dates[0] && reviewDate <= dates[this.numberOfDays - 1]) {
 					const username: string = review.user!.login;
+					const prNumber = review.pull_request_url
+						? parseInt(review.pull_request_url.split('/').pop() || '0')
+						: 0;
+
+					// Skip if this is an excluded PR and the reviewer is the author
+					if (excludedPRs.has(prNumber)) {
+						const prAuthor = prAuthorMap.get(prNumber);
+						if (prAuthor === username) {
+							console.log(`Skipping review by ${username} on excluded PR #${prNumber}`);
+							return;
+						}
+					}
+
 					if (!userStats[username]) {
 						userStats[username] = {};
 						dates.forEach((date) => (userStats[username][date] = 0));
@@ -262,84 +437,6 @@ export class CodeReviewsService {
 			if (error instanceof Error && 'status' in error && error.status === 403) {
 				throw new ApiError(
 					'Access denied. Please ensure your token has access to the organization repository.',
-					403
-				);
-			}
-			if (error instanceof Error && 'status' in error && error.status === 401) {
-				throw new ApiError('Invalid token. Please check your token is correct.', 401);
-			}
-			if (error instanceof Error && 'status' in error) {
-				throw new ApiError((error as Error).message, error.status as NumericRange<200, 599>);
-			}
-			throw new ApiError((error as Error).message, 500);
-		}
-	};
-
-	private get_pr_sizes = async (): Promise<Record<string, IPRSizeStats>> => {
-		try {
-			const dates = this.get_date_range();
-			const startDate = this.format_date_for_query(dates[0]);
-
-			console.log('Fetching PR sizes... This may take a moment...');
-
-			// Get recent PRs (updated in the last 14 days)
-			const recentPRs = await this.get_recent_pull_requests(startDate);
-			console.log('Recent PRs fetched:', recentPRs.length);
-
-			// Fetch detailed PR info to get additions/deletions
-			const prDetails = await this.fetch_pr_details_in_parallel(recentPRs);
-			console.log('PR details fetched:', prDetails.length);
-
-			// Group PRs by author and calculate stats
-			const prsByAuthor: Record<string, number[]> = {};
-
-			for (const pr of prDetails) {
-				const author = pr.user?.login;
-				if (!author) {
-					console.log('Skipping PR with no author:', pr.number);
-					continue;
-				}
-
-				const size = (pr.additions ?? 0) + (pr.deletions ?? 0);
-				console.log(`PR #${pr.number} by ${author}: ${size} lines (${pr.additions} + ${pr.deletions})`);
-
-				if (!prsByAuthor[author]) {
-					prsByAuthor[author] = [];
-				}
-				prsByAuthor[author].push(size);
-			}
-			console.log('Authors with PRs:', Object.keys(prsByAuthor));
-
-			// Calculate min, max, avg for each author
-			const result: Record<string, IPRSizeStats> = {};
-
-			for (const [author, sizes] of Object.entries(prsByAuthor)) {
-				if (sizes.length === 0) continue;
-
-				const min = Math.min(...sizes);
-				const max = Math.max(...sizes);
-				const avg = Math.round(sizes.reduce((sum, s) => sum + s, 0) / sizes.length);
-
-				result[author] = {
-					min,
-					max,
-					avg,
-					pr_count: sizes.length
-				};
-			}
-
-			return result;
-		} catch (error: unknown) {
-			Logger.error(error);
-			if (error instanceof Error && 'status' in error && error.status === 404) {
-				throw new ApiError(
-					'Repository not found. Please check if the organization and repository names are correct.',
-					404
-				);
-			}
-			if (error instanceof Error && 'status' in error && error.status === 403) {
-				throw new ApiError(
-					'API rate limit exceeded or insufficient permissions. Please check your token has the necessary permissions.',
 					403
 				);
 			}

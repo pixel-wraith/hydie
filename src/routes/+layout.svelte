@@ -18,6 +18,10 @@
 
 <header>
 	<h1>Hydie</h1>
+	<nav>
+		<Link href="/" kind="neutral-text">Dashboard</Link>
+		<Link href="/contributors" kind="neutral-text">Contributors</Link>
+	</nav>
 </header>
 
 <main>
@@ -43,6 +47,11 @@
 
 		& h1 {
 			margin: 0;
+		}
+
+		& nav {
+			display: flex;
+			gap: 1.5rem;
 		}
 	}
 

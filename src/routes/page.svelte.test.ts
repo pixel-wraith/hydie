@@ -11,7 +11,8 @@ describe('/+page.svelte', () => {
 					status: 'not-synced',
 					last_synced: null,
 					data: {},
-					pr_sizes: {}
+					pr_sizes: {},
+					pull_requests: []
 				}
 			}
 		});
@@ -37,7 +38,8 @@ describe('/+page.svelte', () => {
 							avg: 55,
 							pr_count: 3
 						}
-					}
+					},
+					pull_requests: []
 				}
 			}
 		});
@@ -59,7 +61,8 @@ describe('/+page.svelte', () => {
 							'2025-12-08': 2
 						}
 					},
-					pr_sizes: {}
+					pr_sizes: {},
+					pull_requests: []
 				}
 			}
 		});

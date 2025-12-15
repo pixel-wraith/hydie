@@ -6,14 +6,24 @@
 	import dayjs from 'dayjs';
 	import type { ICodeReviewsData, IPRSizeStats } from '../types';
 
+	type Date = {
+		date: string;
+		is_weekend: boolean;
+	}
+
+	type Review = {
+		count: number;
+		is_weekend: boolean;
+	}
+
 	let { data }: { data: PageData } = $props();
 
 	let sync_status = $state(data.status ?? '');
 	let error = $state('');
 
-	let dates: string[] = $state([]);
+	let dates: Date[] = $state([]);
 	let last_synced: string | null = $state(null);
-	let user_data: { user: string; reviews: number[] }[] = $state([]);
+	let user_data: { user: string; reviews: Review[] }[] = $state([]);
 	let pr_size_data: { user: string; stats: IPRSizeStats }[] = $state([]);
 
 	onMount(() => {
@@ -24,12 +34,18 @@
 		last_synced = data.last_synced;
 		user_data = Object.entries(data.data).map(([user, reviews], index) => {
 			if (index === 0) {
-				dates = Object.keys(reviews).map((date) => dayjs(date).format('MMM DD'));
+				dates = Object.keys(reviews).map((date) => ({
+					date: dayjs(date).format('MMM DD'),
+					is_weekend: dayjs(date).day() === 0 || dayjs(date).day() === 6
+				}));
 			}
 
 			return {
 				user,
-				reviews: Object.values(reviews)
+				reviews: Object.entries(reviews).map(([date, count]) => ({
+					count,
+					is_weekend: dayjs(date).day() === 0 || dayjs(date).day() === 6
+				}))
 			};
 		});
 
@@ -109,7 +125,12 @@
 			<div class="header row">
 				<div>User</div>
 				{#each dates as date (date)}
-					<div class="date">{date}</div>
+					<div
+						class="date"
+						class:weekend={date.is_weekend}
+					>
+						{date.date}
+					</div>
 				{/each}
 			</div>
 
@@ -117,8 +138,10 @@
 				<div class="row">
 					<div>{user}</div>
 
-					{#each reviews as review, index (index)}
-						<div>{review}</div>
+					{#each reviews as { count, is_weekend }, index (index)}
+						<div class:weekend={is_weekend}>
+							{count}
+						</div>
 					{/each}
 				</div>
 			{/each}
@@ -233,6 +256,10 @@
 
 		& .date {
 			font-size: 0.7rem;
+		}
+
+		& .weekend {
+			color: var(--neutral-500);
 		}
 
 		&:first-child {

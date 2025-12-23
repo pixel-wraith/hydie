@@ -10,7 +10,8 @@ import type {
 	IPRSizeStats,
 	IPullRequestInfo,
 	IPRContributorStats,
-	IReviewerStats
+	IReviewerStats,
+	IReviewComment
 } from '../../types';
 import type { NumericRange } from '@sveltejs/kit';
 
@@ -61,6 +62,10 @@ export class CodeReviewsService {
 				if (!data.reviewer_stats) {
 					data.reviewer_stats = {};
 				}
+				// Ensure review_comments exists for backwards compatibility
+				if (!data.review_comments) {
+					data.review_comments = [];
+				}
 				return data;
 			} else {
 				fs.writeFileSync(
@@ -72,7 +77,8 @@ export class CodeReviewsService {
 						pr_sizes: {},
 						pull_requests: [],
 						pr_contributor_stats: [],
-						reviewer_stats: {}
+						reviewer_stats: {},
+						review_comments: []
 					})
 				);
 
@@ -82,6 +88,7 @@ export class CodeReviewsService {
 					pull_requests: [],
 					pr_contributor_stats: [],
 					reviewer_stats: {},
+					review_comments: [],
 					status: 'not-synced',
 					last_synced: null
 				};
@@ -118,7 +125,8 @@ export class CodeReviewsService {
 			const prDetails = await this.fetch_pr_details_in_parallel(recentPRs);
 
 			// Fetch review comments for each PR
-			const reviewCommentsMap = await this.fetch_review_comments_in_parallel(prDetails);
+			const { countMap: reviewCommentsMap, comments: review_comments } =
+				await this.fetch_review_comments_in_parallel(prDetails);
 
 			// Extract PR info for storage (all PRs, not filtered)
 			const pull_requests = this.extract_pr_info(prDetails, reviewCommentsMap);
@@ -142,7 +150,8 @@ export class CodeReviewsService {
 				pr_sizes: pr_sizes,
 				pull_requests: pull_requests,
 				pr_contributor_stats: pr_contributor_stats,
-				reviewer_stats: reviewer_stats
+				reviewer_stats: reviewer_stats,
+				review_comments: review_comments
 			};
 
 			fs.writeFileSync(this.file_name, JSON.stringify(data));
@@ -600,9 +609,10 @@ export class CodeReviewsService {
 
 	private fetch_review_comments_in_parallel = async (
 		prDetails: PullRequestDetail[]
-	): Promise<Map<number, number>> => {
+	): Promise<{ countMap: Map<number, number>; comments: IReviewComment[] }> => {
 		const BATCH_SIZE = 10;
 		const reviewCommentsMap = new Map<number, number>();
+		const allReviewComments: IReviewComment[] = [];
 
 		console.log('Fetching review comments for PRs...');
 
@@ -618,19 +628,38 @@ export class CodeReviewsService {
 						per_page: 100
 					});
 
-					// Count only comments from other devs (not the PR author)
+					// Filter to only comments from other devs (not the PR author)
 					const otherDevComments = comments.filter((comment) => comment.user?.login !== prAuthor);
 
-					return { prNumber: pr.number, count: otherDevComments.length };
+					// Extract full comment data
+					const extractedComments: IReviewComment[] = otherDevComments.map((comment) => ({
+						id: comment.id,
+						pr_number: pr.number,
+						pr_title: pr.title,
+						pr_url: pr.html_url,
+						author: comment.user?.login ?? 'unknown',
+						body: comment.body,
+						path: comment.path,
+						line: comment.line ?? comment.original_line ?? null,
+						created_at: comment.created_at,
+						html_url: comment.html_url
+					}));
+
+					return {
+						prNumber: pr.number,
+						count: otherDevComments.length,
+						comments: extractedComments
+					};
 				})
 			);
 
 			for (const result of batchResults) {
 				reviewCommentsMap.set(result.prNumber, result.count);
+				allReviewComments.push(...result.comments);
 			}
 		}
 
-		return reviewCommentsMap;
+		return { countMap: reviewCommentsMap, comments: allReviewComments };
 	};
 
 	private calculate_pr_contributor_stats(

@@ -47,6 +47,19 @@ export interface IReviewerStats {
 	avg_comments_per_pr: number;
 }
 
+export interface IReviewComment {
+	id: number;
+	pr_number: number;
+	pr_title: string;
+	pr_url: string;
+	author: string;
+	body: string;
+	path: string;
+	line: number | null;
+	created_at: string;
+	html_url: string;
+}
+
 export interface IExcludedPRs {
 	excluded: number[];
 	last_modified: string | null;
@@ -60,4 +73,5 @@ export interface ICodeReviewsData {
 	pull_requests: IPullRequestInfo[];
 	pr_contributor_stats: IPRContributorStats[];
 	reviewer_stats: Record<string, IReviewerStats>;
+	review_comments: IReviewComment[];
 }

@@ -14,7 +14,8 @@ describe('/+page.svelte', () => {
 					pr_sizes: {},
 					pull_requests: [],
 					pr_contributor_stats: [],
-					reviewer_stats: {}
+					reviewer_stats: {},
+					review_comments: []
 				}
 			}
 		});
@@ -43,7 +44,8 @@ describe('/+page.svelte', () => {
 					},
 					pull_requests: [],
 					pr_contributor_stats: [],
-					reviewer_stats: {}
+					reviewer_stats: {},
+					review_comments: []
 				}
 			}
 		});
@@ -68,7 +70,8 @@ describe('/+page.svelte', () => {
 					pr_sizes: {},
 					pull_requests: [],
 					pr_contributor_stats: [],
-					reviewer_stats: {}
+					reviewer_stats: {},
+					review_comments: []
 				}
 			}
 		});

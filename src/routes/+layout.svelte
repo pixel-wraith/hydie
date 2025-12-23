@@ -21,6 +21,7 @@
 	<nav>
 		<Link href="/" kind="neutral-text">Dashboard</Link>
 		<Link href="/contributors" kind="neutral-text">Contributors</Link>
+		<Link href="/comments" kind="neutral-text">Comments</Link>
 	</nav>
 </header>
 

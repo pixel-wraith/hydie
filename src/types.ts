@@ -15,6 +15,29 @@ export interface IPullRequestInfo {
 	additions: number;
 	deletions: number;
 	created_at: string;
+	merged_at: string | null;
+	state: 'open' | 'closed';
+	review_comments_count: number;
+}
+
+export interface IPRContributorStats {
+	author: string;
+	prs_by_date: Record<string, number>;
+	prs: IPRDetail[];
+	avg_days_to_merge: number | null;
+	avg_review_comments: number;
+	total_prs: number;
+}
+
+export interface IPRDetail {
+	number: number;
+	title: string;
+	html_url: string;
+	created_at: string;
+	merged_at: string | null;
+	state: 'open' | 'closed';
+	days_to_merge: number | null;
+	review_comments_count: number;
 }
 
 export interface IExcludedPRs {
@@ -28,4 +51,5 @@ export interface ICodeReviewsData {
 	data: Record<string, Record<string, number>>;
 	pr_sizes: Record<string, IPRSizeStats>;
 	pull_requests: IPullRequestInfo[];
+	pr_contributor_stats: IPRContributorStats[];
 }

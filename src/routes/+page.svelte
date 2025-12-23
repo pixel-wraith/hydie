@@ -4,17 +4,17 @@
 	import Button from '$lib/components/Button.svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import dayjs from 'dayjs';
-	import type { ICodeReviewsData, IPRSizeStats } from '../types';
+	import type { ICodeReviewsData, IPRSizeStats, IPRContributorStats } from '../types';
 
 	type Date = {
 		date: string;
 		is_weekend: boolean;
-	}
+	};
 
 	type Review = {
 		count: number;
 		is_weekend: boolean;
-	}
+	};
 
 	let { data }: { data: PageData } = $props();
 
@@ -25,6 +25,7 @@
 	let last_synced: string | null = $state(null);
 	let user_data: { user: string; reviews: Review[] }[] = $state([]);
 	let pr_size_data: { user: string; stats: IPRSizeStats }[] = $state([]);
+	let pr_contributor_stats: IPRContributorStats[] = $state([]);
 
 	onMount(() => {
 		parse_data(data);
@@ -53,6 +54,8 @@
 			user,
 			stats
 		}));
+
+		pr_contributor_stats = data.pr_contributor_stats || [];
 	};
 
 	const refresh_code_reviews = async () => {
@@ -125,10 +128,7 @@
 			<div class="header row">
 				<div>User</div>
 				{#each dates as date (date)}
-					<div
-						class="date"
-						class:weekend={date.is_weekend}
-					>
+					<div class="date" class:weekend={date.is_weekend}>
 						{date.date}
 					</div>
 				{/each}
@@ -151,7 +151,7 @@
 			<section class="pr-sizes-section">
 				<h2>Average PR Size (Lines Changed)</h2>
 				<p class="section-description">
-					PR size statistics for each contributor over the last 14 days
+					PR size statistics for all PRs with activity in the last 14 days
 				</p>
 
 				<div class="pr-sizes-table">
@@ -173,6 +173,95 @@
 						</div>
 					{/each}
 				</div>
+			</section>
+		{/if}
+
+		{#if pr_contributor_stats.length > 0}
+			<section class="pr-contributor-section">
+				<h2>PR Contributor Statistics</h2>
+				<p class="section-description">
+					Statistics for PRs opened (created) within the last 14 days, including time to merge and
+					review comments received
+				</p>
+
+				<div class="pr-contributor-summary-table">
+					<div class="pr-contributor-summary-header pr-contributor-summary-row">
+						<div>Contributor</div>
+						<div>Total PRs</div>
+						<div>Avg Days to Merge</div>
+						<div>Avg Review Comments</div>
+					</div>
+
+					{#each pr_contributor_stats as stats (stats.author)}
+						<div class="pr-contributor-summary-row">
+							<div>{stats.author}</div>
+							<div>{stats.total_prs}</div>
+							<div>{stats.avg_days_to_merge !== null ? stats.avg_days_to_merge : '-'}</div>
+							<div>{stats.avg_review_comments}</div>
+						</div>
+					{/each}
+				</div>
+
+				<h3>PRs Opened Per Day</h3>
+				<div class="pr-per-day-table">
+					<div class="pr-per-day-header pr-per-day-row">
+						<div>Contributor</div>
+						{#each dates as date (date)}
+							<div class="date" class:weekend={date.is_weekend}>{date.date}</div>
+						{/each}
+					</div>
+
+					{#each pr_contributor_stats as stats (stats.author)}
+						<div class="pr-per-day-row">
+							<div>{stats.author}</div>
+							{#each Object.entries(stats.prs_by_date) as [date, count], index (index)}
+								<div class:weekend={dayjs(date).day() === 0 || dayjs(date).day() === 6}>
+									{count}
+								</div>
+							{/each}
+						</div>
+					{/each}
+				</div>
+
+				<h3>Individual PR Details</h3>
+				{#each pr_contributor_stats as stats (stats.author)}
+					{#if stats.prs.length > 0}
+						<details class="pr-details-accordion">
+							<summary>{stats.author} ({stats.prs.length} PRs)</summary>
+							<div class="pr-details-table">
+								<div class="pr-details-header pr-details-row">
+									<div>PR</div>
+									<div>Title</div>
+									<div>Status</div>
+									<div>Days</div>
+									<div>Comments</div>
+								</div>
+
+								{#each stats.prs as pr (pr.number)}
+									<div class="pr-details-row">
+										<div>
+											<a href={pr.html_url} target="_blank" rel="noopener noreferrer">
+												#{pr.number}
+											</a>
+										</div>
+										<div class="pr-title" title={pr.title}>{pr.title}</div>
+										<div class:open={pr.state === 'open'} class:merged={pr.merged_at}>
+											{#if pr.merged_at}
+												merged
+											{:else if pr.state === 'open'}
+												open
+											{:else}
+												closed
+											{/if}
+										</div>
+										<div>{pr.days_to_merge !== null ? pr.days_to_merge : '-'}</div>
+										<div>{pr.review_comments_count}</div>
+									</div>
+								{/each}
+							</div>
+						</details>
+					{/if}
+				{/each}
 			</section>
 		{/if}
 	</div>
@@ -311,6 +400,158 @@
 
 		& > div:not(:first-child) {
 			text-align: right;
+		}
+	}
+
+	.pr-contributor-section {
+		margin-top: 3rem;
+		padding: 0 2rem;
+
+		& h2 {
+			font-size: 1.25rem;
+			color: var(--primary-500);
+			margin-bottom: 0.5rem;
+		}
+
+		& h3 {
+			font-size: 1rem;
+			color: var(--secondary-500);
+			margin-top: 2rem;
+			margin-bottom: 1rem;
+		}
+
+		& .section-description {
+			font-size: 0.8rem;
+			color: var(--neutral-500);
+			margin-bottom: 1.5rem;
+		}
+	}
+
+	.pr-contributor-summary-table {
+		display: flex;
+		flex-direction: column;
+		width: 100%;
+		max-width: 50rem;
+	}
+
+	.pr-contributor-summary-header {
+		& div {
+			color: var(--secondary-500);
+		}
+	}
+
+	.pr-contributor-summary-row {
+		display: grid;
+		grid-template-columns: 12rem repeat(3, 1fr);
+		grid-column-gap: 0.5rem;
+		border-bottom: 1px solid var(--neutral-200);
+		padding-bottom: 0.5rem;
+		margin-bottom: 0.5rem;
+
+		& > div:not(:first-child) {
+			text-align: right;
+		}
+	}
+
+	.pr-per-day-table {
+		display: flex;
+		flex-direction: column;
+		width: 100%;
+	}
+
+	.pr-per-day-header {
+		align-items: end;
+
+		& div {
+			color: var(--secondary-500);
+		}
+	}
+
+	.pr-per-day-row {
+		display: grid;
+		grid-template-columns: 12rem repeat(14, 1fr);
+		grid-column-gap: 0.5rem;
+		border-bottom: 1px solid var(--neutral-200);
+		padding-bottom: 0.5rem;
+		margin-bottom: 0.5rem;
+
+		& .date {
+			font-size: 0.7rem;
+		}
+
+		& .weekend {
+			color: var(--neutral-500);
+		}
+
+		& > div:not(:first-child) {
+			text-align: center;
+		}
+	}
+
+	.pr-details-accordion {
+		margin-bottom: 1rem;
+		border: 1px solid var(--neutral-200);
+		border-radius: 0.5rem;
+		overflow: hidden;
+
+		& summary {
+			padding: 0.75rem 1rem;
+			cursor: pointer;
+			background-color: var(--neutral-100);
+			font-weight: 500;
+
+			&:hover {
+				background-color: var(--neutral-200);
+			}
+		}
+	}
+
+	.pr-details-table {
+		display: flex;
+		flex-direction: column;
+		padding: 1rem;
+	}
+
+	.pr-details-header {
+		& div {
+			color: var(--secondary-500);
+			font-weight: 500;
+		}
+	}
+
+	.pr-details-row {
+		display: grid;
+		grid-template-columns: 5rem 1fr 5rem 4rem 5rem;
+		grid-column-gap: 1rem;
+		border-bottom: 1px solid var(--neutral-200);
+		padding: 0.5rem 0;
+		align-items: center;
+
+		& a {
+			color: var(--primary-500);
+			text-decoration: none;
+
+			&:hover {
+				text-decoration: underline;
+			}
+		}
+
+		& .pr-title {
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+
+		& .open {
+			color: var(--success-500, #22c55e);
+		}
+
+		& .merged {
+			color: var(--primary-500);
+		}
+
+		& > div:nth-child(n + 3) {
+			text-align: center;
 		}
 	}
 </style>

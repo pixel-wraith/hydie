@@ -5,7 +5,12 @@ import { Logger } from './logger';
 import { ExclusionsService } from './exclusions';
 import { GITHUB_OWNER, GITHUB_REPO, GITHUB_TOKEN } from '$env/static/private';
 import { ApiError } from '$lib/utils/api-error';
-import type { ICodeReviewsData, IPRSizeStats, IPullRequestInfo } from '../../types';
+import type {
+	ICodeReviewsData,
+	IPRSizeStats,
+	IPullRequestInfo,
+	IPRContributorStats
+} from '../../types';
 import type { NumericRange } from '@sveltejs/kit';
 
 type PullRequest = RestEndpointMethodTypes['pulls']['list']['response']['data'][number];
@@ -47,6 +52,10 @@ export class CodeReviewsService {
 				if (!data.pull_requests) {
 					data.pull_requests = [];
 				}
+				// Ensure pr_contributor_stats exists for backwards compatibility
+				if (!data.pr_contributor_stats) {
+					data.pr_contributor_stats = [];
+				}
 				return data;
 			} else {
 				fs.writeFileSync(
@@ -56,7 +65,8 @@ export class CodeReviewsService {
 						status: 'not-synced',
 						data: {},
 						pr_sizes: {},
-						pull_requests: []
+						pull_requests: [],
+						pr_contributor_stats: []
 					})
 				);
 
@@ -64,6 +74,7 @@ export class CodeReviewsService {
 					data: {},
 					pr_sizes: {},
 					pull_requests: [],
+					pr_contributor_stats: [],
 					status: 'not-synced',
 					last_synced: null
 				};
@@ -99,19 +110,28 @@ export class CodeReviewsService {
 			const recentPRs = await this.get_recent_pull_requests(startDate);
 			const prDetails = await this.fetch_pr_details_in_parallel(recentPRs);
 
+			// Fetch review comments for each PR
+			const reviewCommentsMap = await this.fetch_review_comments_in_parallel(prDetails);
+
 			// Extract PR info for storage (all PRs, not filtered)
-			const pull_requests = this.extract_pr_info(prDetails);
+			const pull_requests = this.extract_pr_info(prDetails, reviewCommentsMap);
 
 			// Calculate stats with exclusions applied
 			const code_reviews = await this.get_code_reviews(excluded_prs, prDetails);
 			const pr_sizes = this.calculate_pr_sizes(prDetails, excluded_prs);
+			const pr_contributor_stats = this.calculate_pr_contributor_stats(
+				prDetails,
+				reviewCommentsMap,
+				excluded_prs
+			);
 
 			data = {
 				last_synced: new Date().toISOString(),
 				status: 'synced',
 				data: code_reviews,
 				pr_sizes: pr_sizes,
-				pull_requests: pull_requests
+				pull_requests: pull_requests,
+				pr_contributor_stats: pr_contributor_stats
 			};
 
 			fs.writeFileSync(this.file_name, JSON.stringify(data));
@@ -145,6 +165,12 @@ export class CodeReviewsService {
 			// Recalculate PR sizes from stored pull_requests
 			const pr_sizes = this.calculate_pr_sizes_from_stored(file_data.pull_requests, excluded_prs);
 
+			// Recalculate PR contributor stats from stored pull_requests
+			const pr_contributor_stats = this.calculate_pr_contributor_stats_from_stored(
+				file_data.pull_requests,
+				excluded_prs
+			);
+
 			// For code reviews, we need to filter based on excluded PRs
 			// Since we don't store the PR number with each review, we'll recalculate
 			// by filtering the existing data based on excluded PR authors
@@ -157,7 +183,8 @@ export class CodeReviewsService {
 			const data: ICodeReviewsData = {
 				...file_data,
 				data: code_reviews,
-				pr_sizes: pr_sizes
+				pr_sizes: pr_sizes,
+				pr_contributor_stats: pr_contributor_stats
 			};
 
 			fs.writeFileSync(this.file_name, JSON.stringify(data));
@@ -169,7 +196,10 @@ export class CodeReviewsService {
 		}
 	}
 
-	private extract_pr_info(prDetails: PullRequestDetail[]): IPullRequestInfo[] {
+	private extract_pr_info(
+		prDetails: PullRequestDetail[],
+		reviewCommentsMap: Map<number, number>
+	): IPullRequestInfo[] {
 		return prDetails.map((pr) => ({
 			number: pr.number,
 			title: pr.title,
@@ -177,7 +207,10 @@ export class CodeReviewsService {
 			author: pr.user?.login ?? 'unknown',
 			additions: pr.additions ?? 0,
 			deletions: pr.deletions ?? 0,
-			created_at: pr.created_at
+			created_at: pr.created_at,
+			merged_at: pr.merged_at,
+			state: pr.state as 'open' | 'closed',
+			review_comments_count: reviewCommentsMap.get(pr.number) ?? 0
 		}));
 	}
 
@@ -259,6 +292,89 @@ export class CodeReviewsService {
 		}
 
 		return result;
+	}
+
+	private calculate_pr_contributor_stats_from_stored(
+		pullRequests: IPullRequestInfo[],
+		excludedPRs: Set<number>
+	): IPRContributorStats[] {
+		const dates = this.get_date_range();
+		const statsByAuthor = new Map<string, IPRContributorStats>();
+
+		for (const pr of pullRequests) {
+			const author = pr.author;
+			if (!author) continue;
+
+			// Skip excluded PRs
+			if (excludedPRs.has(pr.number)) continue;
+
+			const createdDate = pr.created_at.split('T')[0];
+
+			// Only count PRs created within our date range
+			if (createdDate < dates[0] || createdDate > dates[dates.length - 1]) continue;
+
+			if (!statsByAuthor.has(author)) {
+				const prsByDate: Record<string, number> = {};
+				dates.forEach((date) => (prsByDate[date] = 0));
+
+				statsByAuthor.set(author, {
+					author,
+					prs_by_date: prsByDate,
+					prs: [],
+					avg_days_to_merge: null,
+					avg_review_comments: 0,
+					total_prs: 0
+				});
+			}
+
+			const stats = statsByAuthor.get(author)!;
+
+			// Count PRs by date
+			if (stats.prs_by_date[createdDate] !== undefined) {
+				stats.prs_by_date[createdDate]++;
+			}
+
+			// Calculate days to merge or age for open PRs
+			let daysToMerge: number | null = null;
+			if (pr.merged_at) {
+				const created = new Date(pr.created_at);
+				const merged = new Date(pr.merged_at);
+				daysToMerge = Math.ceil((merged.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+			} else if (pr.state === 'open') {
+				const created = new Date(pr.created_at);
+				const now = new Date();
+				daysToMerge = Math.ceil((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+			}
+
+			stats.prs.push({
+				number: pr.number,
+				title: pr.title,
+				html_url: pr.html_url,
+				created_at: pr.created_at,
+				merged_at: pr.merged_at,
+				state: pr.state,
+				days_to_merge: daysToMerge,
+				review_comments_count: pr.review_comments_count
+			});
+
+			stats.total_prs++;
+		}
+
+		// Calculate averages for each author
+		for (const stats of statsByAuthor.values()) {
+			const prsWithMergeTime = stats.prs.filter((pr) => pr.days_to_merge !== null);
+			if (prsWithMergeTime.length > 0) {
+				const totalDays = prsWithMergeTime.reduce((sum, pr) => sum + (pr.days_to_merge ?? 0), 0);
+				stats.avg_days_to_merge = Math.round((totalDays / prsWithMergeTime.length) * 10) / 10;
+			}
+
+			const totalComments = stats.prs.reduce((sum, pr) => sum + pr.review_comments_count, 0);
+			stats.avg_review_comments =
+				stats.prs.length > 0 ? Math.round((totalComments / stats.prs.length) * 10) / 10 : 0;
+		}
+
+		// Sort by total PRs descending
+		return Array.from(statsByAuthor.values()).sort((a, b) => b.total_prs - a.total_prs);
 	}
 
 	private filter_code_reviews(
@@ -470,4 +586,125 @@ export class CodeReviewsService {
 
 		return allDetails;
 	};
+
+	private fetch_review_comments_in_parallel = async (
+		prDetails: PullRequestDetail[]
+	): Promise<Map<number, number>> => {
+		const BATCH_SIZE = 10;
+		const reviewCommentsMap = new Map<number, number>();
+
+		console.log('Fetching review comments for PRs...');
+
+		for (let i = 0; i < prDetails.length; i += BATCH_SIZE) {
+			const batch = prDetails.slice(i, i + BATCH_SIZE);
+			const batchResults = await Promise.all(
+				batch.map(async (pr) => {
+					const prAuthor = pr.user?.login;
+					const comments = await this.octokit.paginate(this.octokit.rest.pulls.listReviewComments, {
+						owner: GITHUB_OWNER,
+						repo: GITHUB_REPO,
+						pull_number: pr.number,
+						per_page: 100
+					});
+
+					// Count only comments from other devs (not the PR author)
+					const otherDevComments = comments.filter((comment) => comment.user?.login !== prAuthor);
+
+					return { prNumber: pr.number, count: otherDevComments.length };
+				})
+			);
+
+			for (const result of batchResults) {
+				reviewCommentsMap.set(result.prNumber, result.count);
+			}
+		}
+
+		return reviewCommentsMap;
+	};
+
+	private calculate_pr_contributor_stats(
+		prDetails: PullRequestDetail[],
+		reviewCommentsMap: Map<number, number>,
+		excludedPRs: Set<number>
+	): IPRContributorStats[] {
+		const dates = this.get_date_range();
+		const statsByAuthor = new Map<string, IPRContributorStats>();
+
+		for (const pr of prDetails) {
+			const author = pr.user?.login;
+			if (!author) continue;
+
+			// Skip excluded PRs
+			if (excludedPRs.has(pr.number)) continue;
+
+			const createdDate = pr.created_at.split('T')[0];
+
+			// Only count PRs created within our date range
+			if (createdDate < dates[0] || createdDate > dates[dates.length - 1]) continue;
+
+			if (!statsByAuthor.has(author)) {
+				const prsByDate: Record<string, number> = {};
+				dates.forEach((date) => (prsByDate[date] = 0));
+
+				statsByAuthor.set(author, {
+					author,
+					prs_by_date: prsByDate,
+					prs: [],
+					avg_days_to_merge: null,
+					avg_review_comments: 0,
+					total_prs: 0
+				});
+			}
+
+			const stats = statsByAuthor.get(author)!;
+
+			// Count PRs by date
+			if (stats.prs_by_date[createdDate] !== undefined) {
+				stats.prs_by_date[createdDate]++;
+			}
+
+			// Calculate days to merge or age for open PRs
+			let daysToMerge: number | null = null;
+			if (pr.merged_at) {
+				const created = new Date(pr.created_at);
+				const merged = new Date(pr.merged_at);
+				daysToMerge = Math.ceil((merged.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+			} else if (pr.state === 'open') {
+				const created = new Date(pr.created_at);
+				const now = new Date();
+				daysToMerge = Math.ceil((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+			}
+
+			const reviewComments = reviewCommentsMap.get(pr.number) ?? 0;
+
+			stats.prs.push({
+				number: pr.number,
+				title: pr.title,
+				html_url: pr.html_url,
+				created_at: pr.created_at,
+				merged_at: pr.merged_at,
+				state: pr.state as 'open' | 'closed',
+				days_to_merge: daysToMerge,
+				review_comments_count: reviewComments
+			});
+
+			stats.total_prs++;
+		}
+
+		// Calculate averages for each author
+		for (const stats of statsByAuthor.values()) {
+			const prsWithMergeTime = stats.prs.filter((pr) => pr.days_to_merge !== null);
+			if (prsWithMergeTime.length > 0) {
+				const totalDays = prsWithMergeTime.reduce((sum, pr) => sum + (pr.days_to_merge ?? 0), 0);
+				stats.avg_days_to_merge = Math.round((totalDays / prsWithMergeTime.length) * 10) / 10;
+			}
+
+			const totalComments = stats.prs.reduce((sum, pr) => sum + pr.review_comments_count, 0);
+			stats.avg_review_comments =
+				stats.prs.length > 0 ? Math.round((totalComments / stats.prs.length) * 10) / 10 : 0;
+		}
+
+		// Sort by total PRs descending
+		return Array.from(statsByAuthor.values()).sort((a, b) => b.total_prs - a.total_prs);
+	}
 }

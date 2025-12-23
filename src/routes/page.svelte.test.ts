@@ -12,7 +12,8 @@ describe('/+page.svelte', () => {
 					last_synced: null,
 					data: {},
 					pr_sizes: {},
-					pull_requests: []
+					pull_requests: [],
+					pr_contributor_stats: []
 				}
 			}
 		});
@@ -39,13 +40,14 @@ describe('/+page.svelte', () => {
 							pr_count: 3
 						}
 					},
-					pull_requests: []
+					pull_requests: [],
+					pr_contributor_stats: []
 				}
 			}
 		});
 		expect(screen.getByText('Average PR Size (Lines Changed)')).toBeInTheDocument();
 		expect(
-			screen.getByText('PR size statistics for each contributor over the last 14 days')
+			screen.getByText('PR size statistics for all PRs with activity in the last 14 days')
 		).toBeInTheDocument();
 	});
 
@@ -62,7 +64,8 @@ describe('/+page.svelte', () => {
 						}
 					},
 					pr_sizes: {},
-					pull_requests: []
+					pull_requests: [],
+					pr_contributor_stats: []
 				}
 			}
 		});

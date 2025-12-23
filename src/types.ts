@@ -40,6 +40,13 @@ export interface IPRDetail {
 	review_comments_count: number;
 }
 
+export interface IReviewerStats {
+	reviewer: string;
+	total_prs_reviewed: number;
+	total_review_comments: number;
+	avg_comments_per_pr: number;
+}
+
 export interface IExcludedPRs {
 	excluded: number[];
 	last_modified: string | null;
@@ -52,4 +59,5 @@ export interface ICodeReviewsData {
 	pr_sizes: Record<string, IPRSizeStats>;
 	pull_requests: IPullRequestInfo[];
 	pr_contributor_stats: IPRContributorStats[];
+	reviewer_stats: Record<string, IReviewerStats>;
 }

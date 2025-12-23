@@ -9,7 +9,8 @@ import type {
 	ICodeReviewsData,
 	IPRSizeStats,
 	IPullRequestInfo,
-	IPRContributorStats
+	IPRContributorStats,
+	IReviewerStats
 } from '../../types';
 import type { NumericRange } from '@sveltejs/kit';
 
@@ -56,6 +57,10 @@ export class CodeReviewsService {
 				if (!data.pr_contributor_stats) {
 					data.pr_contributor_stats = [];
 				}
+				// Ensure reviewer_stats exists for backwards compatibility
+				if (!data.reviewer_stats) {
+					data.reviewer_stats = {};
+				}
 				return data;
 			} else {
 				fs.writeFileSync(
@@ -66,7 +71,8 @@ export class CodeReviewsService {
 						data: {},
 						pr_sizes: {},
 						pull_requests: [],
-						pr_contributor_stats: []
+						pr_contributor_stats: [],
+						reviewer_stats: {}
 					})
 				);
 
@@ -75,6 +81,7 @@ export class CodeReviewsService {
 					pr_sizes: {},
 					pull_requests: [],
 					pr_contributor_stats: [],
+					reviewer_stats: {},
 					status: 'not-synced',
 					last_synced: null
 				};
@@ -125,13 +132,17 @@ export class CodeReviewsService {
 				excluded_prs
 			);
 
+			// Calculate reviewer stats (PRs reviewed and comments made)
+			const reviewer_stats = await this.calculate_reviewer_stats(recentPRs, prDetails);
+
 			data = {
 				last_synced: new Date().toISOString(),
 				status: 'synced',
 				data: code_reviews,
 				pr_sizes: pr_sizes,
 				pull_requests: pull_requests,
-				pr_contributor_stats: pr_contributor_stats
+				pr_contributor_stats: pr_contributor_stats,
+				reviewer_stats: reviewer_stats
 			};
 
 			fs.writeFileSync(this.file_name, JSON.stringify(data));
@@ -706,5 +717,103 @@ export class CodeReviewsService {
 
 		// Sort by total PRs descending
 		return Array.from(statsByAuthor.values()).sort((a, b) => b.total_prs - a.total_prs);
+	}
+
+	private async calculate_reviewer_stats(
+		recentPRs: PullRequest[],
+		prDetails: PullRequestDetail[]
+	): Promise<Record<string, IReviewerStats>> {
+		console.log('Calculating reviewer stats...');
+
+		// Build a map of PR number to author
+		const prAuthorMap = new Map<number, string>();
+		for (const pr of prDetails) {
+			if (pr.user?.login) {
+				prAuthorMap.set(pr.number, pr.user.login);
+			}
+		}
+
+		// Fetch all reviews
+		const allReviews = await this.fetch_reviews_in_parallel(recentPRs);
+
+		// Track unique PRs reviewed by each reviewer (excluding self-reviews)
+		const reviewerPRs = new Map<string, Set<number>>();
+
+		for (const review of allReviews) {
+			const reviewer = review.user?.login;
+			if (!reviewer) continue;
+
+			const prNumber = review.pull_request_url
+				? parseInt(review.pull_request_url.split('/').pop() || '0')
+				: 0;
+
+			const prAuthor = prAuthorMap.get(prNumber);
+
+			// Skip self-reviews
+			if (prAuthor === reviewer) continue;
+
+			if (!reviewerPRs.has(reviewer)) {
+				reviewerPRs.set(reviewer, new Set());
+			}
+			reviewerPRs.get(reviewer)!.add(prNumber);
+		}
+
+		// Fetch all review comments and count by reviewer (excluding self-comments)
+		const reviewerComments = new Map<string, number>();
+		const BATCH_SIZE = 10;
+
+		for (let i = 0; i < prDetails.length; i += BATCH_SIZE) {
+			const batch = prDetails.slice(i, i + BATCH_SIZE);
+			const batchResults = await Promise.all(
+				batch.map(async (pr) => {
+					const prAuthor = pr.user?.login;
+					const comments = await this.octokit.paginate(this.octokit.rest.pulls.listReviewComments, {
+						owner: GITHUB_OWNER,
+						repo: GITHUB_REPO,
+						pull_number: pr.number,
+						per_page: 100
+					});
+
+					// Count comments by each reviewer (excluding self-comments)
+					const commentsByReviewer = new Map<string, number>();
+					for (const comment of comments) {
+						const commenter = comment.user?.login;
+						if (!commenter || commenter === prAuthor) continue;
+
+						commentsByReviewer.set(commenter, (commentsByReviewer.get(commenter) || 0) + 1);
+					}
+
+					return commentsByReviewer;
+				})
+			);
+
+			// Aggregate comment counts
+			for (const commentMap of batchResults) {
+				for (const [reviewer, count] of commentMap) {
+					reviewerComments.set(reviewer, (reviewerComments.get(reviewer) || 0) + count);
+				}
+			}
+		}
+
+		// Build the reviewer stats
+		const result: Record<string, IReviewerStats> = {};
+
+		// Get all unique reviewers from both reviews and comments
+		const allReviewers = new Set([...reviewerPRs.keys(), ...reviewerComments.keys()]);
+
+		for (const reviewer of allReviewers) {
+			const prsReviewed = reviewerPRs.get(reviewer)?.size || 0;
+			const totalComments = reviewerComments.get(reviewer) || 0;
+
+			result[reviewer] = {
+				reviewer,
+				total_prs_reviewed: prsReviewed,
+				total_review_comments: totalComments,
+				avg_comments_per_pr:
+					prsReviewed > 0 ? Math.round((totalComments / prsReviewed) * 10) / 10 : 0
+			};
+		}
+
+		return result;
 	}
 }

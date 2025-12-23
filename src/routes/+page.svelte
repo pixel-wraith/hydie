@@ -4,7 +4,12 @@
 	import Button from '$lib/components/Button.svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import dayjs from 'dayjs';
-	import type { ICodeReviewsData, IPRSizeStats, IPRContributorStats } from '../types';
+	import type {
+		ICodeReviewsData,
+		IPRSizeStats,
+		IPRContributorStats,
+		IReviewerStats
+	} from '../types';
 
 	type Date = {
 		date: string;
@@ -26,6 +31,7 @@
 	let user_data: { user: string; reviews: Review[] }[] = $state([]);
 	let pr_size_data: { user: string; stats: IPRSizeStats }[] = $state([]);
 	let pr_contributor_stats: IPRContributorStats[] = $state([]);
+	let reviewer_stats: Record<string, IReviewerStats> = $state({});
 
 	onMount(() => {
 		parse_data(data);
@@ -56,6 +62,7 @@
 		}));
 
 		pr_contributor_stats = data.pr_contributor_stats || [];
+		reviewer_stats = data.reviewer_stats || {};
 	};
 
 	const refresh_code_reviews = async () => {
@@ -132,6 +139,9 @@
 						{date.date}
 					</div>
 				{/each}
+				<div class="reviewer-stat-header">PRs Reviewed</div>
+				<div class="reviewer-stat-header">Comments</div>
+				<div class="reviewer-stat-header">Avg/PR</div>
 			</div>
 
 			{#each user_data as { user, reviews } (user)}
@@ -143,6 +153,10 @@
 							{count}
 						</div>
 					{/each}
+
+					<div class="reviewer-stat">{reviewer_stats[user]?.total_prs_reviewed ?? 0}</div>
+					<div class="reviewer-stat">{reviewer_stats[user]?.total_review_comments ?? 0}</div>
+					<div class="reviewer-stat">{reviewer_stats[user]?.avg_comments_per_pr ?? 0}</div>
 				</div>
 			{/each}
 		</div>
@@ -337,7 +351,7 @@
 
 	.row {
 		display: grid;
-		grid-template-columns: 12rem repeat(14, 1fr);
+		grid-template-columns: 12rem repeat(14, 1fr) repeat(3, 5.5rem);
 		grid-column-gap: 0.5rem;
 		border-bottom: 1px solid var(--neutral-200);
 		padding-bottom: 0.5rem;
@@ -357,6 +371,17 @@
 
 		& > div:not(:first-child) {
 			text-align: center;
+		}
+
+		& .reviewer-stat-header {
+			font-size: 0.7rem;
+			border-left: 1px solid var(--neutral-300);
+			padding-left: 0.5rem;
+		}
+
+		& .reviewer-stat {
+			border-left: 1px solid var(--neutral-300);
+			padding-left: 0.5rem;
 		}
 	}
 

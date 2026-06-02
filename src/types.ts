@@ -65,6 +65,13 @@ export interface IExcludedPRs {
 	last_modified: string | null;
 }
 
+export interface IDeveloperVisibility {
+	reviews: string[];
+	pr_sizes: string[];
+	contributor_stats: string[];
+	last_modified: string | null;
+}
+
 export interface ICodeReviewsData {
 	last_synced: string | null;
 	status: Status;

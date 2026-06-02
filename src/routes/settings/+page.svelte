@@ -2,6 +2,7 @@
 	import type { PageData } from './$types';
 	import Button from '$lib/components/Button.svelte';
 	import Link from '$lib/components/Link.svelte';
+	import Spinner from '$lib/components/Spinner.svelte';
 	import dayjs from 'dayjs';
 
 	type ColumnKey = 'reviews' | 'pr_sizes' | 'contributor_stats';
@@ -33,15 +34,22 @@
 	});
 
 	let save_error = $state('');
+	let abort_controller: AbortController | null = null;
 
 	const is_shown = (column: ColumnKey, login: string): boolean => !hidden[column].has(login);
 
 	const persist = async () => {
+		// Cancel any in-flight save so a slower earlier request can't land after a
+		// newer one and overwrite the latest state on disk.
+		abort_controller?.abort();
+		abort_controller = new AbortController();
+
 		try {
 			save_error = '';
 			const response = await fetch('/api/github/developer-visibility', {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
+				signal: abort_controller.signal,
 				body: JSON.stringify({
 					reviews: [...hidden.reviews],
 					pr_sizes: [...hidden.pr_sizes],
@@ -54,6 +62,8 @@
 				throw new Error(error.message ?? 'Failed to save changes');
 			}
 		} catch (err: unknown) {
+			// A superseded request was intentionally aborted — not a real failure.
+			if (err instanceof DOMException && err.name === 'AbortError') return;
 			save_error = err instanceof Error ? err.message : 'Failed to save changes';
 		}
 	};
@@ -114,6 +124,16 @@
 	{#if data.status === 'not-synced'}
 		<div class="empty-container">
 			<p>No developer data available. Please sync from the Dashboard first.</p>
+			<Link href="/" kind="primary">Go to Dashboard</Link>
+		</div>
+	{:else if data.status === 'syncing'}
+		<div class="empty-container">
+			<Spinner size="large" type="tertiary">Syncing</Spinner>
+			<p>A sync is in progress. Developer data will be available once it completes.</p>
+		</div>
+	{:else if data.status === 'error'}
+		<div class="empty-container">
+			<p>A sync error occurred. Go to the Dashboard to retry before managing visibility.</p>
 			<Link href="/" kind="primary">Go to Dashboard</Link>
 		</div>
 	{:else if developers.length === 0}

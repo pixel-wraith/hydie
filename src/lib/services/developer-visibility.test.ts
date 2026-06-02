@@ -125,6 +125,15 @@ describe('apply_visibility_filter', () => {
 		expect(Object.keys(data.pr_sizes)).toEqual(['alice', 'manager']);
 		expect(data.pr_contributor_stats.map((s) => s.author)).toEqual(['alice', 'manager']);
 	});
+
+	it('shallow-filters: surviving values keep their original references', () => {
+		const data = make_data();
+		const result = apply_visibility_filter(data, empty_hidden({ reviews: ['bob'] }));
+
+		expect(result.reviewer_stats['alice']).toBe(data.reviewer_stats['alice']);
+		expect(result.pr_sizes['alice']).toBe(data.pr_sizes['alice']);
+		expect(result.pr_contributor_stats[0]).toBe(data.pr_contributor_stats[0]);
+	});
 });
 
 describe('list_dashboard_developers', () => {

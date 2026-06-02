@@ -7,6 +7,8 @@ export type VisibilitySection = 'reviews' | 'pr_sizes' | 'contributor_stats';
 const SECTIONS: VisibilitySection[] = ['reviews', 'pr_sizes', 'contributor_stats'];
 
 export class DeveloperVisibilityService {
+	// Resolved relative to process.cwd() — the server must run from the project
+	// root, matching ExclusionsService and CodeReviewsService.
 	private file_name = 'hidden-developers.json';
 
 	public async get_hidden(): Promise<IDeveloperVisibility> {

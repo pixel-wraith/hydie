@@ -37,16 +37,30 @@
 		parse_data(data);
 	});
 
+	const to_date_columns = (date_keys: string[]): Date[] =>
+		date_keys.map((date) => ({
+			date: dayjs(date).format('MMM DD'),
+			is_weekend: dayjs(date).day() === 0 || dayjs(date).day() === 6
+		}));
+
+	// Derive the date column headers from a stable source so they survive even
+	// when every reviewer is hidden (which empties `data.data`). Falls back to
+	// the contributor stats, which carry the same date range.
+	const get_date_keys = (data: ICodeReviewsData): string[] => {
+		const first_reviewer = Object.values(data.data)[0];
+		if (first_reviewer) return Object.keys(first_reviewer);
+
+		const first_contributor = data.pr_contributor_stats?.[0];
+		if (first_contributor) return Object.keys(first_contributor.prs_by_date);
+
+		return [];
+	};
+
 	const parse_data = (data: ICodeReviewsData) => {
 		last_synced = data.last_synced;
-		user_data = Object.entries(data.data).map(([user, reviews], index) => {
-			if (index === 0) {
-				dates = Object.keys(reviews).map((date) => ({
-					date: dayjs(date).format('MMM DD'),
-					is_weekend: dayjs(date).day() === 0 || dayjs(date).day() === 6
-				}));
-			}
+		dates = to_date_columns(get_date_keys(data));
 
+		user_data = Object.entries(data.data).map(([user, reviews]) => {
 			return {
 				user,
 				reviews: Object.entries(reviews).map(([date, count]) => ({

@@ -94,6 +94,25 @@ describe('calculate_team_stats', () => {
 			expect(calculate_team_stats(data).total_prs_reviewed.value).toBe(5);
 		});
 
+		it('falls back to summing counts when reviewed_pr_numbers is only partially present', () => {
+			// A sync writes reviewed_pr_numbers for every reviewer at once, so a mixed
+			// set is not reachable in practice. If it ever occurs we cannot build an
+			// exact union (the bare reviewer contributes no PR numbers), so the safe,
+			// documented behaviour is to fall back to the sum of counts.
+			const data = make_data({
+				reviewer_stats: {
+					alice: reviewer({
+						reviewer: 'alice',
+						total_prs_reviewed: 3,
+						reviewed_pr_numbers: [1, 2, 3]
+					}),
+					bob: reviewer({ reviewer: 'bob', total_prs_reviewed: 2 })
+				}
+			});
+
+			expect(calculate_team_stats(data).total_prs_reviewed.value).toBe(5);
+		});
+
 		it('computes avg comments left per PR as total comments over distinct PRs (micro)', () => {
 			const data = make_data({
 				reviewer_stats: {

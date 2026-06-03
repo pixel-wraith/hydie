@@ -33,23 +33,22 @@
 	let pr_size_data: { user: string; stats: IPRSizeStats }[] = $state([]);
 	let pr_contributor_stats: IPRContributorStats[] = $state([]);
 	let reviewer_stats: Record<string, IReviewerStats> = $state({});
-	let team_stats: ITeamStats | null = $state(null);
+	// Computed server-side in load() (post visibility-filter); initialised directly
+	// from the page data so the scorecards render during SSR. The sync flow reloads
+	// the page, so this stays consistent rather than being recomputed client-side.
+	let team_stats: ITeamStats | null = $state(data.team_stats ?? null);
 
 	onMount(() => {
 		parse_data(data);
-		// team_stats is computed server-side in load() (post visibility-filter) and
-		// only travels on the initial page load — the sync flow reloads the page so
-		// this stays consistent rather than being recomputed client-side.
-		team_stats = data.team_stats ?? null;
 	});
 
 	type TeamScoreCard = { label: string; value: number | null; format: 'int' | 'avg' | 'lines' };
 
 	const format_score = (card: TeamScoreCard): string => {
 		if (card.value === null) return '—';
-		if (card.format === 'lines') return card.value.toLocaleString();
-		if (card.format === 'int') return card.value.toLocaleString();
-		return card.value.toFixed(1);
+		// Averages show one decimal; counts and line totals are whole numbers with
+		// thousands separators.
+		return card.format === 'avg' ? card.value.toFixed(1) : card.value.toLocaleString();
 	};
 
 	let team_score_groups = $derived.by((): { title: string; cards: TeamScoreCard[] }[] => {

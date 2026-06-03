@@ -274,6 +274,11 @@ export class CodeReviewsService {
 		const prsByAuthor: Record<string, number[]> = {};
 
 		for (const pr of pullRequests) {
+			// Skip PRs closed without being merged
+			if (pr.state === 'closed' && !pr.merged_at) {
+				continue;
+			}
+
 			// Skip excluded PRs
 			if (excludedPRs.has(pr.number)) {
 				console.log(`Skipping excluded PR #${pr.number} by ${pr.author}`);
@@ -324,6 +329,9 @@ export class CodeReviewsService {
 		for (const pr of pullRequests) {
 			const author = pr.author;
 			if (!author) continue;
+
+			// Skip PRs closed without being merged
+			if (pr.state === 'closed' && !pr.merged_at) continue;
 
 			// Skip excluded PRs
 			if (excludedPRs.has(pr.number)) continue;
@@ -447,6 +455,14 @@ export class CodeReviewsService {
 					shouldStop = true;
 					break;
 				}
+
+				// Exclude PRs that were closed without being merged. A merged PR also
+				// has state 'closed' but carries a merged_at timestamp; one that was
+				// closed and never merged has none, and must not count toward any metric.
+				if (pr.state === 'closed' && !pr.merged_at) {
+					continue;
+				}
+
 				recentPRs.push(pr);
 			}
 

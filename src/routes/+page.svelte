@@ -273,13 +273,11 @@
 											</a>
 										</div>
 										<div class="pr-title" title={pr.title}>{pr.title}</div>
-										<div class:open={pr.state === 'open'} class:merged={pr.merged_at}>
+										<div class:open={!pr.merged_at} class:merged={pr.merged_at}>
 											{#if pr.merged_at}
 												merged
-											{:else if pr.state === 'open'}
-												open
 											{:else}
-												closed
+												open
 											{/if}
 										</div>
 										<div>{pr.days_to_merge !== null ? pr.days_to_merge : '-'}</div>

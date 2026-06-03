@@ -8,7 +8,8 @@
 		ICodeReviewsData,
 		IPRSizeStats,
 		IPRContributorStats,
-		IReviewerStats
+		IReviewerStats,
+		ITeamStats
 	} from '../types';
 
 	type Date = {
@@ -32,9 +33,61 @@
 	let pr_size_data: { user: string; stats: IPRSizeStats }[] = $state([]);
 	let pr_contributor_stats: IPRContributorStats[] = $state([]);
 	let reviewer_stats: Record<string, IReviewerStats> = $state({});
+	let team_stats: ITeamStats | null = $state(null);
 
 	onMount(() => {
 		parse_data(data);
+		// team_stats is computed server-side in load() (post visibility-filter) and
+		// only travels on the initial page load — the sync flow reloads the page so
+		// this stays consistent rather than being recomputed client-side.
+		team_stats = data.team_stats ?? null;
+	});
+
+	type TeamScoreCard = { label: string; value: number | null; format: 'int' | 'avg' | 'lines' };
+
+	const format_score = (card: TeamScoreCard): string => {
+		if (card.value === null) return '—';
+		if (card.format === 'lines') return card.value.toLocaleString();
+		if (card.format === 'int') return card.value.toLocaleString();
+		return card.value.toFixed(1);
+	};
+
+	let team_score_groups = $derived.by((): { title: string; cards: TeamScoreCard[] }[] => {
+		const ts = team_stats;
+		if (!ts) return [];
+
+		return [
+			{
+				title: 'Reviews',
+				cards: [
+					{ label: 'Avg PRs Reviewed', value: ts.avg_prs_reviewed.value, format: 'avg' },
+					{ label: 'Total PRs Reviewed', value: ts.total_prs_reviewed.value, format: 'int' },
+					{ label: 'Avg Comments / Dev', value: ts.avg_comments_per_dev.value, format: 'avg' },
+					{ label: 'Total Comments', value: ts.total_comments.value, format: 'int' },
+					{
+						label: 'Avg Comments Left / PR',
+						value: ts.avg_comments_left_per_pr.value,
+						format: 'avg'
+					}
+				]
+			},
+			{
+				title: 'PR Size',
+				cards: [{ label: 'Avg PR Size (lines)', value: ts.avg_pr_size.value, format: 'lines' }]
+			},
+			{
+				title: 'Contributions',
+				cards: [
+					{ label: 'Total PRs', value: ts.total_prs.value, format: 'int' },
+					{ label: 'Avg Days to Merge', value: ts.avg_days_to_merge.value, format: 'avg' },
+					{
+						label: 'Avg Comments Received / PR',
+						value: ts.avg_comments_received_per_pr.value,
+						format: 'avg'
+					}
+				]
+			}
+		];
 	});
 
 	const to_date_columns = (date_keys: string[]): Date[] =>
@@ -92,9 +145,10 @@
 			});
 
 			if (response.ok) {
-				const data = await response.json();
-				parse_data(data);
-				sync_status = data.status;
+				// Reload so the server load() re-runs: it re-applies the visibility
+				// filter and recomputes team stats from the freshly-synced data,
+				// keeping the scorecards and tables consistent.
+				window.location.reload();
 			} else {
 				const error = await response.json();
 				throw new Error(error.message);
@@ -144,6 +198,24 @@
 				<Button onclick={sync_code_reviews}>Sync Code Reviews</Button>
 			</div>
 		</header>
+
+		{#if team_score_groups.length > 0}
+			<section class="team-scores">
+				{#each team_score_groups as group (group.title)}
+					<div class="team-score-group">
+						<h3>{group.title}</h3>
+						<div class="team-score-cards">
+							{#each group.cards as card (card.label)}
+								<div class="team-score-card" class:empty={card.value === null}>
+									<span class="team-score-value">{format_score(card)}</span>
+									<span class="team-score-label">{card.label}</span>
+								</div>
+							{/each}
+						</div>
+					</div>
+				{/each}
+			</section>
+		{/if}
 
 		<div class="table">
 			<div class="header row">
@@ -342,6 +414,57 @@
 				font-size: 0.8rem;
 				color: var(--neutral-500);
 			}
+		}
+	}
+
+	.team-scores {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 2.5rem;
+		margin-top: 2rem;
+		padding: 0 2rem;
+	}
+
+	.team-score-group {
+		& h3 {
+			font-size: 0.8rem;
+			text-transform: uppercase;
+			letter-spacing: 0.05em;
+			color: var(--secondary-500);
+			margin: 0 0 0.75rem;
+		}
+	}
+
+	.team-score-cards {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1rem;
+	}
+
+	.team-score-card {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		min-width: 8rem;
+		padding: 1rem;
+		border: 1px solid var(--neutral-200);
+		border-radius: 0.5rem;
+		background-color: var(--neutral-100);
+
+		&.empty {
+			opacity: 0.5;
+		}
+
+		& .team-score-value {
+			font-size: 1.75rem;
+			font-weight: 600;
+			color: var(--primary-500);
+			line-height: 1;
+		}
+
+		& .team-score-label {
+			font-size: 0.75rem;
+			color: var(--neutral-500);
 		}
 	}
 

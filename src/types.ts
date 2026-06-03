@@ -90,9 +90,13 @@ export interface ICodeReviewsData {
 
 // A single team-level scorecard value. `value` is null when there is no data to
 // compute it from (an empty/hidden section, or a zero per-PR denominator), which
-// the UI renders dimmed rather than as a misleading 0.
+// the UI renders dimmed rather than as a misleading 0. `approximate` is true when
+// the value was derived from a fallback that may over-count — currently only the
+// distinct PRs-reviewed metric (and the average that divides by it) before a
+// re-sync populates reviewed_pr_numbers; the UI flags these with a ~ prefix.
 export interface ITeamScore {
 	value: number | null;
+	approximate?: boolean;
 }
 
 export interface ITeamStats {

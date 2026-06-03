@@ -80,18 +80,26 @@ describe('calculate_team_stats', () => {
 			});
 
 			// Union {1,2,3,4} = 4 distinct, not the sum of 5.
-			expect(calculate_team_stats(data).total_prs_reviewed.value).toBe(4);
+			const stats = calculate_team_stats(data);
+			expect(stats.total_prs_reviewed.value).toBe(4);
+			// An exact union is not flagged approximate.
+			expect(stats.total_prs_reviewed.approximate).toBeFalsy();
 		});
 
-		it('falls back to summing counts when reviewed_pr_numbers is absent', () => {
+		it('falls back to summing counts (flagged approximate) when reviewed_pr_numbers is absent', () => {
 			const data = make_data({
 				reviewer_stats: {
-					alice: reviewer({ reviewer: 'alice', total_prs_reviewed: 3 }),
-					bob: reviewer({ reviewer: 'bob', total_prs_reviewed: 2 })
+					alice: reviewer({ reviewer: 'alice', total_prs_reviewed: 3, total_review_comments: 6 }),
+					bob: reviewer({ reviewer: 'bob', total_prs_reviewed: 2, total_review_comments: 0 })
 				}
 			});
 
-			expect(calculate_team_stats(data).total_prs_reviewed.value).toBe(5);
+			const stats = calculate_team_stats(data);
+			expect(stats.total_prs_reviewed.value).toBe(5);
+			expect(stats.total_prs_reviewed.approximate).toBe(true);
+			// The average that divides by the over-counted total inherits the flag.
+			expect(stats.avg_comments_left_per_pr.value).toBe(1.2); // 6 / 5
+			expect(stats.avg_comments_left_per_pr.approximate).toBe(true);
 		});
 
 		it('falls back to summing counts when reviewed_pr_numbers is only partially present', () => {

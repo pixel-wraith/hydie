@@ -2,7 +2,8 @@ import type { ICodeReviewsData, ITeamStats, ITeamScore } from '../../types';
 
 const round1 = (n: number): number => Math.round(n * 10) / 10;
 
-const score = (value: number | null): ITeamScore => ({ value });
+const score = (value: number | null, approximate = false): ITeamScore =>
+	approximate ? { value, approximate: true } : { value };
 
 /**
  * Computes the team-level scorecards shown at the top of the dashboard.
@@ -36,8 +37,11 @@ export const calculate_team_stats = (data: ICodeReviewsData): ITeamStats => {
 
 	// Distinct PRs reviewed: union of each visible reviewer's reviewed PR numbers.
 	// Falls back to the sum of per-reviewer counts when the field is absent (data
-	// written before reviewed_pr_numbers existed); a re-sync produces the exact value.
+	// written before reviewed_pr_numbers existed); that sum may over-count PRs
+	// reviewed by more than one person, so the result is flagged approximate until
+	// a re-sync produces the exact value.
 	let total_prs_reviewed: number | null;
+	let prs_reviewed_approximate = false;
 	if (reviewer_count === 0) {
 		total_prs_reviewed = null;
 	} else if (reviewers.every((r) => Array.isArray(r.reviewed_pr_numbers))) {
@@ -48,6 +52,7 @@ export const calculate_team_stats = (data: ICodeReviewsData): ITeamStats => {
 		total_prs_reviewed = distinct.size;
 	} else {
 		total_prs_reviewed = sum_prs_reviewed;
+		prs_reviewed_approximate = true;
 	}
 
 	// Micro: total comments left across the team ÷ distinct PRs reviewed.
@@ -84,10 +89,12 @@ export const calculate_team_stats = (data: ICodeReviewsData): ITeamStats => {
 
 	return {
 		avg_prs_reviewed: score(avg_prs_reviewed),
-		total_prs_reviewed: score(total_prs_reviewed),
+		total_prs_reviewed: score(total_prs_reviewed, prs_reviewed_approximate),
 		avg_comments_per_dev: score(avg_comments_per_dev),
 		total_comments: score(reviewer_count > 0 ? total_comments : null),
-		avg_comments_left_per_pr: score(avg_comments_left_per_pr),
+		// Divides by the (possibly over-counted) distinct PR total, so it inherits
+		// the same approximation.
+		avg_comments_left_per_pr: score(avg_comments_left_per_pr, prs_reviewed_approximate),
 		avg_pr_size: score(avg_pr_size),
 		total_prs: score(contributors.length > 0 ? sum_total_prs : null),
 		avg_days_to_merge: score(avg_days_to_merge),

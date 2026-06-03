@@ -9,7 +9,8 @@
 		IPRSizeStats,
 		IPRContributorStats,
 		IReviewerStats,
-		ITeamStats
+		ITeamStats,
+		ITeamScore
 	} from '../types';
 
 	type Date = {
@@ -42,13 +43,19 @@
 		parse_data(data);
 	});
 
-	type TeamScoreCard = { label: string; value: number | null; format: 'int' | 'avg' | 'lines' };
+	type TeamScoreCard = { label: string; score: ITeamScore; format: 'int' | 'avg' | 'lines' };
+
+	// Shown as a tooltip on approximate cards so the ~ prefix is explained.
+	const APPROXIMATE_HINT =
+		'Approximate: counted before reviewed PR numbers were recorded, so PRs reviewed by more than one person are double-counted. Re-sync for an exact value.';
 
 	const format_score = (card: TeamScoreCard): string => {
-		if (card.value === null) return '—';
+		const { value, approximate } = card.score;
+		if (value === null) return '—';
 		// Averages show one decimal; counts and line totals are whole numbers with
-		// thousands separators.
-		return card.format === 'avg' ? card.value.toFixed(1) : card.value.toLocaleString();
+		// thousands separators. A leading ~ marks values from the over-counting fallback.
+		const formatted = card.format === 'avg' ? value.toFixed(1) : value.toLocaleString();
+		return approximate ? `~${formatted}` : formatted;
 	};
 
 	let team_score_groups = $derived.by((): { title: string; cards: TeamScoreCard[] }[] => {
@@ -59,29 +66,25 @@
 			{
 				title: 'Reviews',
 				cards: [
-					{ label: 'Avg PRs Reviewed', value: ts.avg_prs_reviewed.value, format: 'avg' },
-					{ label: 'Total PRs Reviewed', value: ts.total_prs_reviewed.value, format: 'int' },
-					{ label: 'Avg Comments / Dev', value: ts.avg_comments_per_dev.value, format: 'avg' },
-					{ label: 'Total Comments', value: ts.total_comments.value, format: 'int' },
-					{
-						label: 'Avg Comments Left / PR',
-						value: ts.avg_comments_left_per_pr.value,
-						format: 'avg'
-					}
+					{ label: 'Avg PRs Reviewed', score: ts.avg_prs_reviewed, format: 'avg' },
+					{ label: 'Total PRs Reviewed', score: ts.total_prs_reviewed, format: 'int' },
+					{ label: 'Avg Comments / Dev', score: ts.avg_comments_per_dev, format: 'avg' },
+					{ label: 'Total Comments', score: ts.total_comments, format: 'int' },
+					{ label: 'Avg Comments Left / PR', score: ts.avg_comments_left_per_pr, format: 'avg' }
 				]
 			},
 			{
 				title: 'PR Size',
-				cards: [{ label: 'Avg PR Size (lines)', value: ts.avg_pr_size.value, format: 'lines' }]
+				cards: [{ label: 'Avg PR Size (lines)', score: ts.avg_pr_size, format: 'lines' }]
 			},
 			{
 				title: 'Contributions',
 				cards: [
-					{ label: 'Total PRs', value: ts.total_prs.value, format: 'int' },
-					{ label: 'Avg Days to Merge', value: ts.avg_days_to_merge.value, format: 'avg' },
+					{ label: 'Total PRs', score: ts.total_prs, format: 'int' },
+					{ label: 'Avg Days to Merge', score: ts.avg_days_to_merge, format: 'avg' },
 					{
 						label: 'Avg Comments Received / PR',
-						value: ts.avg_comments_received_per_pr.value,
+						score: ts.avg_comments_received_per_pr,
 						format: 'avg'
 					}
 				]
@@ -205,9 +208,19 @@
 						<h3>{group.title}</h3>
 						<div class="team-score-cards">
 							{#each group.cards as card (card.label)}
-								<div class="team-score-card" class:empty={card.value === null}>
+								<div
+									class="team-score-card"
+									class:empty={card.score.value === null}
+									class:approximate={card.score.approximate}
+									title={card.score.approximate ? APPROXIMATE_HINT : undefined}
+								>
 									<span class="team-score-value">{format_score(card)}</span>
-									<span class="team-score-label">{card.label}</span>
+									<span class="team-score-label">
+										{card.label}
+										{#if card.score.approximate}
+											<span class="team-score-approx" aria-label="approximate">≈</span>
+										{/if}
+									</span>
 								</div>
 							{/each}
 						</div>
@@ -454,6 +467,10 @@
 			opacity: 0.5;
 		}
 
+		&.approximate {
+			cursor: help;
+		}
+
 		& .team-score-value {
 			font-size: 1.75rem;
 			font-weight: 600;
@@ -464,6 +481,11 @@
 		& .team-score-label {
 			font-size: 0.75rem;
 			color: var(--neutral-500);
+		}
+
+		& .team-score-approx {
+			color: var(--neutral-400, var(--neutral-500));
+			font-weight: 600;
 		}
 	}
 

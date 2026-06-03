@@ -19,6 +19,15 @@ type PullRequest = RestEndpointMethodTypes['pulls']['list']['response']['data'][
 type PullRequestDetail = RestEndpointMethodTypes['pulls']['get']['response']['data'];
 type Review = RestEndpointMethodTypes['pulls']['listReviews']['response']['data'][number];
 
+/**
+ * A PR closed without being merged. In GitHub's model a merged PR also has
+ * state 'closed' but carries a merged_at timestamp; one closed without merging
+ * has none. These were never merged and must not count toward any metric.
+ */
+export function is_closed_unmerged(pr: { state: string; merged_at: string | null }): boolean {
+	return pr.state === 'closed' && !pr.merged_at;
+}
+
 export class CodeReviewsService {
 	private file_name = 'data.json';
 	private numberOfDays = 14;
@@ -128,7 +137,8 @@ export class CodeReviewsService {
 			const { countMap: reviewCommentsMap, comments: review_comments } =
 				await this.fetch_review_comments_in_parallel(prDetails);
 
-			// Extract PR info for storage (all PRs, not filtered)
+			// Extract PR info for storage. prDetails excludes closed-unmerged PRs
+			// (filtered at fetch time); exclusion-list filtering happens per-metric.
 			const pull_requests = this.extract_pr_info(prDetails, reviewCommentsMap);
 
 			// Calculate stats with exclusions applied
@@ -247,6 +257,9 @@ export class CodeReviewsService {
 				continue;
 			}
 
+			// Skip PRs closed without being merged
+			if (is_closed_unmerged(pr)) continue;
+
 			// Skip excluded PRs
 			if (excludedPRs.has(pr.number)) {
 				console.log(`Skipping excluded PR #${pr.number} by ${author}`);
@@ -275,7 +288,7 @@ export class CodeReviewsService {
 
 		for (const pr of pullRequests) {
 			// Skip PRs closed without being merged
-			if (pr.state === 'closed' && !pr.merged_at) {
+			if (is_closed_unmerged(pr)) {
 				continue;
 			}
 
@@ -331,7 +344,7 @@ export class CodeReviewsService {
 			if (!author) continue;
 
 			// Skip PRs closed without being merged
-			if (pr.state === 'closed' && !pr.merged_at) continue;
+			if (is_closed_unmerged(pr)) continue;
 
 			// Skip excluded PRs
 			if (excludedPRs.has(pr.number)) continue;
@@ -456,10 +469,9 @@ export class CodeReviewsService {
 					break;
 				}
 
-				// Exclude PRs that were closed without being merged. A merged PR also
-				// has state 'closed' but carries a merged_at timestamp; one that was
-				// closed and never merged has none, and must not count toward any metric.
-				if (pr.state === 'closed' && !pr.merged_at) {
+				// Exclude PRs that were closed without being merged so they never
+				// enter any downstream metric, the stored list, or the UI.
+				if (is_closed_unmerged(pr)) {
 					continue;
 				}
 
@@ -689,6 +701,10 @@ export class CodeReviewsService {
 		for (const pr of prDetails) {
 			const author = pr.user?.login;
 			if (!author) continue;
+
+			// Skip PRs closed without being merged. prDetails already flows from a
+			// filtered list, but this keeps the invariant explicit at the call site.
+			if (is_closed_unmerged(pr)) continue;
 
 			// Skip excluded PRs
 			if (excludedPRs.has(pr.number)) continue;

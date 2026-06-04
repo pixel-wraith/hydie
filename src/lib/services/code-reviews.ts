@@ -863,7 +863,8 @@ export class CodeReviewsService {
 		const allReviewers = new Set([...reviewerPRs.keys(), ...reviewerComments.keys()]);
 
 		for (const reviewer of allReviewers) {
-			const prsReviewed = reviewerPRs.get(reviewer)?.size || 0;
+			const reviewedPRs = reviewerPRs.get(reviewer);
+			const prsReviewed = reviewedPRs?.size || 0;
 			const totalComments = reviewerComments.get(reviewer) || 0;
 
 			result[reviewer] = {
@@ -871,7 +872,10 @@ export class CodeReviewsService {
 				total_prs_reviewed: prsReviewed,
 				total_review_comments: totalComments,
 				avg_comments_per_pr:
-					prsReviewed > 0 ? Math.round((totalComments / prsReviewed) * 10) / 10 : 0
+					prsReviewed > 0 ? Math.round((totalComments / prsReviewed) * 10) / 10 : 0,
+				// Persist the distinct PR numbers so the team-wide distinct count can be
+				// computed as a union across only the currently-visible reviewers.
+				reviewed_pr_numbers: reviewedPRs ? [...reviewedPRs] : []
 			};
 		}
 

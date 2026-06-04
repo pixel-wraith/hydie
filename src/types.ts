@@ -45,6 +45,11 @@ export interface IReviewerStats {
 	total_prs_reviewed: number;
 	total_review_comments: number;
 	avg_comments_per_pr: number;
+	// Distinct PR numbers this reviewer reviewed (excluding self-reviews). Used to
+	// compute a team-wide distinct count. Optional for backwards compatibility with
+	// data.json files written before this field existed; the team-stats calculation
+	// falls back to summing total_prs_reviewed when it is absent.
+	reviewed_pr_numbers?: number[];
 }
 
 export interface IReviewComment {
@@ -81,4 +86,30 @@ export interface ICodeReviewsData {
 	pr_contributor_stats: IPRContributorStats[];
 	reviewer_stats: Record<string, IReviewerStats>;
 	review_comments: IReviewComment[];
+}
+
+// A single team-level scorecard value. `value` is null when there is no data to
+// compute it from (an empty/hidden section, or a zero per-PR denominator), which
+// the UI renders dimmed rather than as a misleading 0. `approximate` is true when
+// the value was derived from a fallback that may over-count — currently only the
+// distinct PRs-reviewed metric (and the average that divides by it) before a
+// re-sync populates reviewed_pr_numbers; the UI flags these with a ~ prefix.
+export interface ITeamScore {
+	value: number | null;
+	approximate?: boolean;
+}
+
+export interface ITeamStats {
+	// Reviews section (scoped by the `reviews` visibility setting).
+	avg_prs_reviewed: ITeamScore;
+	total_prs_reviewed: ITeamScore;
+	avg_comments_per_dev: ITeamScore;
+	total_comments: ITeamScore;
+	avg_comments_left_per_pr: ITeamScore;
+	// PR Size section (scoped by the `pr_sizes` visibility setting).
+	avg_pr_size: ITeamScore;
+	// Contributions section (scoped by the `contributor_stats` visibility setting).
+	total_prs: ITeamScore;
+	avg_days_to_merge: ITeamScore;
+	avg_comments_received_per_pr: ITeamScore;
 }

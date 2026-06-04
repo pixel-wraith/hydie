@@ -8,7 +8,9 @@
 		ICodeReviewsData,
 		IPRSizeStats,
 		IPRContributorStats,
-		IReviewerStats
+		IReviewerStats,
+		ITeamStats,
+		ITeamScore
 	} from '../types';
 
 	type Date = {
@@ -32,9 +34,62 @@
 	let pr_size_data: { user: string; stats: IPRSizeStats }[] = $state([]);
 	let pr_contributor_stats: IPRContributorStats[] = $state([]);
 	let reviewer_stats: Record<string, IReviewerStats> = $state({});
+	// Computed server-side in load() (post visibility-filter); initialised directly
+	// from the page data so the scorecards render during SSR. The sync flow reloads
+	// the page, so this stays consistent rather than being recomputed client-side.
+	let team_stats: ITeamStats | null = $state(data.team_stats ?? null);
 
 	onMount(() => {
 		parse_data(data);
+	});
+
+	type TeamScoreCard = { label: string; score: ITeamScore; format: 'int' | 'avg' | 'lines' };
+
+	// Shown as a tooltip on approximate cards so the ~ prefix is explained.
+	const APPROXIMATE_HINT =
+		'Approximate: counted before reviewed PR numbers were recorded, so PRs reviewed by more than one person are double-counted. Re-sync for an exact value.';
+
+	const format_score = (card: TeamScoreCard): string => {
+		const { value, approximate } = card.score;
+		if (value === null) return '—';
+		// Averages show one decimal; counts and line totals are whole numbers with
+		// thousands separators. A leading ~ marks values from the over-counting fallback.
+		const formatted = card.format === 'avg' ? value.toFixed(1) : value.toLocaleString();
+		return approximate ? `~${formatted}` : formatted;
+	};
+
+	let team_score_groups = $derived.by((): { title: string; cards: TeamScoreCard[] }[] => {
+		const ts = team_stats;
+		if (!ts) return [];
+
+		return [
+			{
+				title: 'Contributions',
+				cards: [
+					{ label: 'Total PRs', score: ts.total_prs, format: 'int' },
+					{ label: 'Avg Days to Merge', score: ts.avg_days_to_merge, format: 'avg' },
+					{
+						label: 'Avg Comments Received / PR',
+						score: ts.avg_comments_received_per_pr,
+						format: 'avg'
+					}
+				]
+			},
+			{
+				title: 'PR Size',
+				cards: [{ label: 'Avg PR Size (lines)', score: ts.avg_pr_size, format: 'lines' }]
+			},
+			{
+				title: 'Reviews',
+				cards: [
+					{ label: 'Avg PRs Reviewed', score: ts.avg_prs_reviewed, format: 'avg' },
+					{ label: 'Total PRs Reviewed', score: ts.total_prs_reviewed, format: 'int' },
+					{ label: 'Avg Comments / Dev', score: ts.avg_comments_per_dev, format: 'avg' },
+					{ label: 'Total Comments', score: ts.total_comments, format: 'int' },
+					{ label: 'Avg Comments Left / PR', score: ts.avg_comments_left_per_pr, format: 'avg' }
+				]
+			}
+		];
 	});
 
 	const to_date_columns = (date_keys: string[]): Date[] =>
@@ -92,9 +147,10 @@
 			});
 
 			if (response.ok) {
-				const data = await response.json();
-				parse_data(data);
-				sync_status = data.status;
+				// Reload so the server load() re-runs: it re-applies the visibility
+				// filter and recomputes team stats from the freshly-synced data,
+				// keeping the scorecards and tables consistent.
+				window.location.reload();
 			} else {
 				const error = await response.json();
 				throw new Error(error.message);
@@ -144,6 +200,36 @@
 				<Button onclick={sync_code_reviews}>Sync Code Reviews</Button>
 			</div>
 		</header>
+
+		{#if team_score_groups.length > 0}
+			<section class="team-scores">
+				<div class="team-scores-card">
+					{#each team_score_groups as group (group.title)}
+						<div class="team-score-group">
+							<h3>{group.title}</h3>
+							<div class="team-score-items">
+								{#each group.cards as card (card.label)}
+									<div
+										class="team-score-item"
+										class:empty={card.score.value === null}
+										class:approximate={card.score.approximate}
+										title={card.score.approximate ? APPROXIMATE_HINT : undefined}
+									>
+										<span class="team-score-value">{format_score(card)}</span>
+										<span class="team-score-label">
+											{card.label}
+											{#if card.score.approximate}
+												<span class="team-score-approx" aria-label="approximate">≈</span>
+											{/if}
+										</span>
+									</div>
+								{/each}
+							</div>
+						</div>
+					{/each}
+				</div>
+			</section>
+		{/if}
 
 		<div class="table">
 			<div class="header row">
@@ -342,6 +428,77 @@
 				font-size: 0.8rem;
 				color: var(--neutral-500);
 			}
+		}
+	}
+
+	.team-scores {
+		margin-top: 2rem;
+		padding: 0 2rem;
+	}
+
+	.team-scores-card {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1.5rem 2.5rem;
+		padding: 1.25rem 1.5rem;
+		border: 1px solid var(--neutral-200);
+		border-radius: 0.5rem;
+		background-color: var(--neutral-100);
+	}
+
+	.team-score-group {
+		& h3 {
+			font-size: 0.8rem;
+			text-transform: uppercase;
+			letter-spacing: 0.05em;
+			color: var(--secondary-500);
+			margin: 0 0 0.75rem;
+		}
+	}
+
+	.team-score-items {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1rem 1.75rem;
+	}
+
+	.team-score-item {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		max-width: 6.5rem;
+
+		&.empty {
+			opacity: 0.5;
+		}
+
+		&.approximate {
+			cursor: help;
+		}
+
+		& .team-score-value {
+			display: flex;
+			justify-content: center;
+			align-items: center;
+			font-size: 1.75rem;
+			font-weight: 600;
+			color: var(--primary-500);
+			line-height: 1;
+		}
+
+		& .team-score-label {
+			display: flex;
+			justify-content: center;
+			align-items: center;
+			font-size: 0.65rem;
+			color: var(--neutral-500);
+			line-height: 1.5;
+			text-align: center;
+		}
+
+		& .team-score-approx {
+			color: var(--neutral-400, var(--neutral-500));
+			font-weight: 600;
 		}
 	}
 

@@ -2,6 +2,21 @@ import { describe, test, expect } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { render, screen } from '@testing-library/svelte';
 import Page from './+page.svelte';
+import type { ITeamStats } from '../types';
+
+// The load() function always supplies team_stats; an all-null set stands in for
+// "no visible data" in these render fixtures.
+const empty_team_stats: ITeamStats = {
+	avg_prs_reviewed: { value: null },
+	total_prs_reviewed: { value: null },
+	avg_comments_per_dev: { value: null },
+	total_comments: { value: null },
+	avg_comments_left_per_pr: { value: null },
+	avg_pr_size: { value: null },
+	total_prs: { value: null },
+	avg_days_to_merge: { value: null },
+	avg_comments_received_per_pr: { value: null }
+};
 
 describe('/+page.svelte', () => {
 	test('should render not-synced message when status is not-synced', () => {
@@ -15,7 +30,8 @@ describe('/+page.svelte', () => {
 					pull_requests: [],
 					pr_contributor_stats: [],
 					reviewer_stats: {},
-					review_comments: []
+					review_comments: [],
+					team_stats: empty_team_stats
 				}
 			}
 		});
@@ -45,7 +61,8 @@ describe('/+page.svelte', () => {
 					pull_requests: [],
 					pr_contributor_stats: [],
 					reviewer_stats: {},
-					review_comments: []
+					review_comments: [],
+					team_stats: empty_team_stats
 				}
 			}
 		});
@@ -71,7 +88,8 @@ describe('/+page.svelte', () => {
 					pull_requests: [],
 					pr_contributor_stats: [],
 					reviewer_stats: {},
-					review_comments: []
+					review_comments: [],
+					team_stats: empty_team_stats
 				}
 			}
 		});

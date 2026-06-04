@@ -203,29 +203,31 @@
 
 		{#if team_score_groups.length > 0}
 			<section class="team-scores">
-				{#each team_score_groups as group (group.title)}
-					<div class="team-score-group">
-						<h3>{group.title}</h3>
-						<div class="team-score-cards">
-							{#each group.cards as card (card.label)}
-								<div
-									class="team-score-card"
-									class:empty={card.score.value === null}
-									class:approximate={card.score.approximate}
-									title={card.score.approximate ? APPROXIMATE_HINT : undefined}
-								>
-									<span class="team-score-value">{format_score(card)}</span>
-									<span class="team-score-label">
-										{card.label}
-										{#if card.score.approximate}
-											<span class="team-score-approx" aria-label="approximate">≈</span>
-										{/if}
-									</span>
-								</div>
-							{/each}
+				<div class="team-scores-card">
+					{#each team_score_groups as group (group.title)}
+						<div class="team-score-group">
+							<h3>{group.title}</h3>
+							<div class="team-score-items">
+								{#each group.cards as card (card.label)}
+									<div
+										class="team-score-item"
+										class:empty={card.score.value === null}
+										class:approximate={card.score.approximate}
+										title={card.score.approximate ? APPROXIMATE_HINT : undefined}
+									>
+										<span class="team-score-value">{format_score(card)}</span>
+										<span class="team-score-label">
+											{card.label}
+											{#if card.score.approximate}
+												<span class="team-score-approx" aria-label="approximate">≈</span>
+											{/if}
+										</span>
+									</div>
+								{/each}
+							</div>
 						</div>
-					</div>
-				{/each}
+					{/each}
+				</div>
 			</section>
 		{/if}
 
@@ -430,11 +432,18 @@
 	}
 
 	.team-scores {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 2.5rem;
 		margin-top: 2rem;
 		padding: 0 2rem;
+	}
+
+	.team-scores-card {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1.5rem 2.5rem;
+		padding: 1.25rem 1.5rem;
+		border: 1px solid var(--neutral-200);
+		border-radius: 0.5rem;
+		background-color: var(--neutral-100);
 	}
 
 	.team-score-group {
@@ -447,21 +456,17 @@
 		}
 	}
 
-	.team-score-cards {
+	.team-score-items {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 1rem;
+		gap: 1rem 1.75rem;
 	}
 
-	.team-score-card {
+	.team-score-item {
 		display: flex;
 		flex-direction: column;
 		gap: 0.25rem;
-		min-width: 8rem;
-		padding: 1rem;
-		border: 1px solid var(--neutral-200);
-		border-radius: 0.5rem;
-		background-color: var(--neutral-100);
+		min-width: 7rem;
 
 		&.empty {
 			opacity: 0.5;

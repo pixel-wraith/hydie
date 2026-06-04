@@ -18,9 +18,11 @@ const score = (value: number | null, approximate = false): ITeamScore =>
  *   `contributor_stats` section).
  *
  * "per dev" metrics are macro-averages (each developer weighted equally);
- * "per PR" metrics are micro-averages (each PR weighted equally). A metric is
- * `null` when there is no data to compute it from, which the UI renders dimmed
- * rather than as a misleading 0.
+ * "per PR" metrics are micro-averages (each PR weighted equally) — except
+ * avg_pr_size, which is deliberately the mean of the displayed devs' per-dev
+ * averages so every visible developer counts equally regardless of PR volume.
+ * A metric is `null` when there is no data to compute it from, which the UI
+ * renders dimmed rather than as a misleading 0.
  */
 export const calculate_team_stats = (data: ICodeReviewsData): ITeamStats => {
 	const reviewers = Object.values(data.reviewer_stats ?? {});
@@ -61,10 +63,10 @@ export const calculate_team_stats = (data: ICodeReviewsData): ITeamStats => {
 			? round1(total_comments / total_prs_reviewed)
 			: null;
 
-	// --- PR Size section (micro: Σ(avg × pr_count) ÷ Σ pr_count) ---
-	const total_size_prs = pr_sizes.reduce((sum, s) => sum + s.pr_count, 0);
-	const total_lines = pr_sizes.reduce((sum, s) => sum + s.avg * s.pr_count, 0);
-	const avg_pr_size = total_size_prs > 0 ? Math.round(total_lines / total_size_prs) : null;
+	// --- PR Size section (macro: mean of the visible devs' per-dev averages, so
+	// every displayed developer counts equally regardless of PR volume) ---
+	const sum_dev_avg_sizes = pr_sizes.reduce((sum, s) => sum + s.avg, 0);
+	const avg_pr_size = pr_sizes.length > 0 ? Math.round(sum_dev_avg_sizes / pr_sizes.length) : null;
 
 	// --- Contributions section ---
 	const sum_total_prs = contributors.reduce((sum, c) => sum + c.total_prs, 0);

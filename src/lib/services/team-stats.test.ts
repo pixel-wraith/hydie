@@ -152,7 +152,7 @@ describe('calculate_team_stats', () => {
 	});
 
 	describe('pr size section', () => {
-		it('computes a PR-count-weighted average size (micro)', () => {
+		it('computes the mean of the visible devs per-dev average sizes (macro)', () => {
 			const data = make_data({
 				pr_sizes: {
 					alice: { min: 1, max: 100, avg: 50, pr_count: 1 },
@@ -160,8 +160,8 @@ describe('calculate_team_stats', () => {
 				}
 			});
 
-			// (50*1 + 100*3) / (1 + 3) = 350 / 4 = 87.5 -> rounded to 88 lines
-			expect(calculate_team_stats(data).avg_pr_size.value).toBe(88);
+			// (50 + 100) / 2 devs = 75 lines — pr_count does not weight the result.
+			expect(calculate_team_stats(data).avg_pr_size.value).toBe(75);
 		});
 
 		it('returns null PR size when no sizes are visible', () => {

@@ -64,20 +64,6 @@
 
 		return [
 			{
-				title: 'Reviews',
-				cards: [
-					{ label: 'Avg PRs Reviewed', score: ts.avg_prs_reviewed, format: 'avg' },
-					{ label: 'Total PRs Reviewed', score: ts.total_prs_reviewed, format: 'int' },
-					{ label: 'Avg Comments / Dev', score: ts.avg_comments_per_dev, format: 'avg' },
-					{ label: 'Total Comments', score: ts.total_comments, format: 'int' },
-					{ label: 'Avg Comments Left / PR', score: ts.avg_comments_left_per_pr, format: 'avg' }
-				]
-			},
-			{
-				title: 'PR Size',
-				cards: [{ label: 'Avg PR Size (lines)', score: ts.avg_pr_size, format: 'lines' }]
-			},
-			{
 				title: 'Contributions',
 				cards: [
 					{ label: 'Total PRs', score: ts.total_prs, format: 'int' },
@@ -87,6 +73,20 @@
 						score: ts.avg_comments_received_per_pr,
 						format: 'avg'
 					}
+				]
+			},
+			{
+				title: 'PR Size',
+				cards: [{ label: 'Avg PR Size (lines)', score: ts.avg_pr_size, format: 'lines' }]
+			},
+			{
+				title: 'Reviews',
+				cards: [
+					{ label: 'Avg PRs Reviewed', score: ts.avg_prs_reviewed, format: 'avg' },
+					{ label: 'Total PRs Reviewed', score: ts.total_prs_reviewed, format: 'int' },
+					{ label: 'Avg Comments / Dev', score: ts.avg_comments_per_dev, format: 'avg' },
+					{ label: 'Total Comments', score: ts.total_comments, format: 'int' },
+					{ label: 'Avg Comments Left / PR', score: ts.avg_comments_left_per_pr, format: 'avg' }
 				]
 			}
 		];
@@ -465,8 +465,8 @@
 	.team-score-item {
 		display: flex;
 		flex-direction: column;
-		gap: 0.25rem;
-		min-width: 7rem;
+		gap: 0.5rem;
+		max-width: 6.5rem;
 
 		&.empty {
 			opacity: 0.5;
@@ -477,6 +477,9 @@
 		}
 
 		& .team-score-value {
+			display: flex;
+			justify-content: center;
+			align-items: center;
 			font-size: 1.75rem;
 			font-weight: 600;
 			color: var(--primary-500);
@@ -484,8 +487,13 @@
 		}
 
 		& .team-score-label {
-			font-size: 0.75rem;
+			display: flex;
+			justify-content: center;
+			align-items: center;
+			font-size: 0.65rem;
 			color: var(--neutral-500);
+			line-height: 1.5;
+			text-align: center;
 		}
 
 		& .team-score-approx {

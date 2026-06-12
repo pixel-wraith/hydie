@@ -5,6 +5,7 @@
 	import Link from '$lib/components/Link.svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import dayjs from 'dayjs';
+	import { dedupe_prs_by_number } from '$lib/utils/pull-requests';
 	import type { IPullRequestInfo } from '../../types';
 
 	let { data }: { data: PageData } = $props();
@@ -23,7 +24,10 @@
 	): Record<string, IPullRequestInfo[]> => {
 		const groups: Record<string, IPullRequestInfo[]> = {};
 
-		for (const pr of pull_requests) {
+		// Guard against duplicate PR numbers from older synced data: the keyed
+		// {#each} below treats a repeated key as a fatal error that aborts the
+		// whole list render. New syncs dedupe at fetch time.
+		for (const pr of dedupe_prs_by_number(pull_requests)) {
 			if (!groups[pr.author]) {
 				groups[pr.author] = [];
 			}

@@ -23,10 +23,10 @@ class Accordion {
 	private isClosing = false;
 	private isExpanding = false;
 
-	constructor(el: HTMLDetailsElement) {
+	constructor(el: HTMLDetailsElement, summary: HTMLElement, content: HTMLElement) {
 		this.el = el;
-		this.summary = el.querySelector('summary')!;
-		this.content = el.querySelector('.content')!;
+		this.summary = summary;
+		this.content = content;
 		this.summary.addEventListener('click', this.onClick);
 	}
 
@@ -94,7 +94,20 @@ class Accordion {
 }
 
 export function accordion(el: HTMLDetailsElement) {
-	const instance = new Accordion(el);
+	const summary = el.querySelector('summary');
+	const content = el.querySelector<HTMLElement>('.content');
+
+	// The animation measures the summary and content heights; without both there
+	// is nothing to animate. Bail loudly rather than throwing on the first click.
+	if (!summary || !content) {
+		console.error(
+			'accordion: <details> must contain a <summary> and a .content element; skipping animation.',
+			el
+		);
+		return;
+	}
+
+	const instance = new Accordion(el, summary, content);
 	return {
 		destroy: instance.destroy
 	};

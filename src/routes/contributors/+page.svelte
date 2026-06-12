@@ -6,6 +6,7 @@
 	import Spinner from '$lib/components/Spinner.svelte';
 	import dayjs from 'dayjs';
 	import { dedupe_prs_by_number } from '$lib/utils/pull-requests';
+	import { accordion } from '$lib/actions/accordion';
 	import type { IPullRequestInfo } from '../../types';
 
 	let { data }: { data: PageData } = $props();
@@ -123,44 +124,67 @@
 			{/if}
 
 			{#each get_sorted_authors() as author (author)}
-				<section class="contributor-section">
-					<h2>
-						{author}
-						<span class="pr-count">({pr_groups[author].length} PRs)</span>
-					</h2>
+				<details class="contributor-section" use:accordion>
+					<summary>
+						<span class="summary-label">
+							{author}
+							<span class="pr-count">({pr_groups[author].length} PRs)</span>
+						</span>
+						<svg
+							class="chevron"
+							width="16"
+							height="16"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							aria-hidden="true"
+						>
+							<polyline points="6 9 12 15 18 9" />
+						</svg>
+					</summary>
 
-					<div class="pr-list">
-						{#each pr_groups[author] as pr (pr.number)}
-							<div
-								class="pr-item"
-								class:excluded={excluded.has(pr.number)}
-								class:large-pr={pr.additions + pr.deletions > 1000}
-							>
-								<label class="pr-checkbox">
-									<input
-										type="checkbox"
-										checked={excluded.has(pr.number)}
-										onchange={() => toggle_exclusion(pr.number)}
-									/>
-									<span class="checkbox-label">Exclude</span>
-								</label>
+					<div class="content">
+						<div class="pr-list">
+							{#each pr_groups[author] as pr (pr.number)}
+								<div
+									class="pr-item"
+									class:excluded={excluded.has(pr.number)}
+									class:large-pr={pr.additions + pr.deletions > 1000}
+								>
+									<label class="pr-checkbox">
+										<input
+											type="checkbox"
+											checked={excluded.has(pr.number)}
+											onchange={() => toggle_exclusion(pr.number)}
+										/>
+										<span class="checkbox-label">Exclude</span>
+									</label>
 
-								<div class="pr-info">
-									<a href={pr.html_url} target="_blank" rel="noopener noreferrer" class="pr-title">
-										#{pr.number} - {pr.title}
-									</a>
-									<div class="pr-meta">
-										<span class="pr-size"
-											>{(pr.additions + pr.deletions).toLocaleString()} lines</span
+									<div class="pr-info">
+										<a
+											href={pr.html_url}
+											target="_blank"
+											rel="noopener noreferrer"
+											class="pr-title"
 										>
-										<span class="pr-additions">+{pr.additions.toLocaleString()}</span>
-										<span class="pr-deletions">-{pr.deletions.toLocaleString()}</span>
+											#{pr.number} - {pr.title}
+										</a>
+										<div class="pr-meta">
+											<span class="pr-size"
+												>{(pr.additions + pr.deletions).toLocaleString()} lines</span
+											>
+											<span class="pr-additions">+{pr.additions.toLocaleString()}</span>
+											<span class="pr-deletions">-{pr.deletions.toLocaleString()}</span>
+										</div>
 									</div>
 								</div>
-							</div>
-						{/each}
+							{/each}
+						</div>
 					</div>
-				</section>
+				</details>
 			{/each}
 		</div>
 	{/if}
@@ -243,21 +267,58 @@
 		background-color: var(--neutral-50);
 		border: 1px solid var(--neutral-200);
 		border-radius: 0.5rem;
-		padding: 1.5rem;
+		/* Clip children to the rounded corners during the height animation. The
+		   accordion action measures summary + content height, so padding lives on
+		   those children rather than on the <details> itself. */
+		overflow: hidden;
 
-		& h2 {
-			margin: 0 0 1rem 0;
-			font-size: 1.1rem;
-			color: var(--neutral-800);
+		& summary {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 0.5rem;
+			padding: 1.25rem 1.5rem;
+			cursor: pointer;
+			user-select: none;
+			/* Remove the native disclosure triangle in favour of the chevron. */
+			list-style: none;
+
+			&::-webkit-details-marker {
+				display: none;
+			}
+
+			&:hover {
+				background-color: var(--neutral-100);
+			}
+		}
+
+		& .summary-label {
 			display: flex;
 			align-items: baseline;
 			gap: 0.5rem;
+			font-size: 1.1rem;
+			font-weight: 600;
+			color: var(--neutral-800);
 		}
 
 		& .pr-count {
 			font-size: 0.85rem;
 			font-weight: normal;
 			color: var(--neutral-500);
+		}
+
+		& .chevron {
+			flex-shrink: 0;
+			color: var(--neutral-500);
+			transition: transform 0.2s ease;
+		}
+
+		&[open] .chevron {
+			transform: rotate(180deg);
+		}
+
+		& .content {
+			padding: 0 1.5rem 1.5rem;
 		}
 	}
 

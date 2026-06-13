@@ -3,6 +3,7 @@ import { Octokit } from '@octokit/rest';
 import type { RestEndpointMethodTypes } from '@octokit/rest';
 import { Logger } from './logger';
 import { ExclusionsService } from './exclusions';
+import { dedupe_prs_by_number } from '$lib/utils/pull-requests';
 import { GITHUB_OWNER, GITHUB_REPO, GITHUB_TOKEN } from '$env/static/private';
 import { ApiError } from '$lib/utils/api-error';
 import type {
@@ -483,7 +484,9 @@ export class CodeReviewsService {
 			}
 		}
 
-		return recentPRs;
+		// Paginating a list sorted by updated_at can surface the same PR on two
+		// pages; dedupe so duplicates never reach storage or any calculation.
+		return dedupe_prs_by_number(recentPRs);
 	};
 
 	private fetch_reviews_in_parallel = async (pullRequests: PullRequest[]): Promise<Review[]> => {

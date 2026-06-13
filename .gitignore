@@ -27,3 +27,5 @@ vite.config.ts.timestamp-*
 data.json
 excluded-prs.json
 hidden-developers.json
+# Playwright MCP debugging artifacts
+.playwright-mcp

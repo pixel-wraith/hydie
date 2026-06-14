@@ -4,29 +4,41 @@ import type { RestEndpointMethodTypes } from '@octokit/rest';
 import { Logger } from './logger';
 import { ExclusionsService } from './exclusions';
 import { dedupe_prs_by_number } from '$lib/utils/pull-requests';
+import {
+	is_bot_user,
+	is_closed_unmerged,
+	is_counted_comment,
+	count_reviews_per_day,
+	count_comments_by_pr,
+	calculate_reviewer_stats,
+	calculate_pr_sizes,
+	calculate_contributor_stats,
+	record_from_stored,
+	type ReviewRecord,
+	type CommentRecord,
+	type PullRequestRecord
+} from './metrics';
 import { GITHUB_OWNER, GITHUB_REPO, GITHUB_TOKEN } from '$env/static/private';
 import { ApiError } from '$lib/utils/api-error';
-import type {
-	ICodeReviewsData,
-	IPRSizeStats,
-	IPullRequestInfo,
-	IPRContributorStats,
-	IReviewerStats,
-	IReviewComment
-} from '../../types';
+import type { ICodeReviewsData, IPullRequestInfo, IReviewComment } from '../../types';
 import type { NumericRange } from '@sveltejs/kit';
+
+// Re-exported so existing importers (and tests) keep importing it from here.
+export { is_closed_unmerged };
 
 type PullRequest = RestEndpointMethodTypes['pulls']['list']['response']['data'][number];
 type PullRequestDetail = RestEndpointMethodTypes['pulls']['get']['response']['data'];
 type Review = RestEndpointMethodTypes['pulls']['listReviews']['response']['data'][number];
 
-/**
- * A PR closed without being merged. In GitHub's model a merged PR also has
- * state 'closed' but carries a merged_at timestamp; one closed without merging
- * has none. These were never merged and must not count toward any metric.
- */
-export function is_closed_unmerged(pr: { state: string; merged_at: string | null }): boolean {
-	return pr.state === 'closed' && !pr.merged_at;
+/** A raw inline comment carrying both the metric fields and the feed fields. */
+interface RawReviewComment extends CommentRecord {
+	id: number;
+	pr_title: string;
+	pr_url: string;
+	body: string;
+	path: string;
+	line: number | null;
+	html_url: string;
 }
 
 export class CodeReviewsService {
@@ -124,35 +136,39 @@ export class CodeReviewsService {
 
 			fs.writeFileSync(this.file_name, JSON.stringify(data));
 
+			await this.verify_repository_access();
+
 			// Get exclusions
 			const exclusions_service = new ExclusionsService();
 			const excluded_prs = await exclusions_service.get_excluded_set();
 
-			// Fetch PR details first (needed for both code_reviews and pr_sizes)
+			// Fetch the raw signal: PRs updated in the window, their details, all
+			// reviews, and all inline comments. Filtering (window, self, bot, state)
+			// happens in the pure metric functions, not here.
 			const dates = this.get_date_range();
 			const startDate = this.format_date_for_query(dates[0]);
 			const recentPRs = await this.get_recent_pull_requests(startDate);
 			const prDetails = await this.fetch_pr_details_in_parallel(recentPRs);
 
-			// Fetch review comments for each PR
-			const { countMap: reviewCommentsMap, comments: review_comments } =
-				await this.fetch_review_comments_in_parallel(prDetails);
+			const pr_records = this.to_pr_records(prDetails);
+			const pr_author_map = new Map(pr_records.map((pr) => [pr.number, pr.author]));
 
-			// Extract PR info for storage. prDetails excludes closed-unmerged PRs
-			// (filtered at fetch time); exclusion-list filtering happens per-metric.
-			const pull_requests = this.extract_pr_info(prDetails, reviewCommentsMap);
+			const review_records = await this.fetch_review_records(recentPRs, pr_author_map);
+			const raw_comments = await this.fetch_review_comments(prDetails, pr_author_map);
+			const comments_by_pr = count_comments_by_pr(raw_comments, dates);
 
-			// Calculate stats with exclusions applied
-			const code_reviews = await this.get_code_reviews(excluded_prs, prDetails);
-			const pr_sizes = this.calculate_pr_sizes(prDetails, excluded_prs);
-			const pr_contributor_stats = this.calculate_pr_contributor_stats(
-				prDetails,
-				reviewCommentsMap,
-				excluded_prs
+			// Derive every metric from the normalized records.
+			const code_reviews = count_reviews_per_day(review_records, dates);
+			const reviewer_stats = calculate_reviewer_stats(review_records, raw_comments, dates);
+			const pr_sizes = calculate_pr_sizes(pr_records, excluded_prs, dates);
+			const pr_contributor_stats = calculate_contributor_stats(
+				pr_records,
+				comments_by_pr,
+				excluded_prs,
+				dates
 			);
-
-			// Calculate reviewer stats (PRs reviewed and comments made)
-			const reviewer_stats = await this.calculate_reviewer_stats(recentPRs, prDetails);
+			const pull_requests = this.extract_pr_info(pr_records, comments_by_pr);
+			const review_comments = this.build_comment_feed(raw_comments, dates);
 
 			data = {
 				last_synced: new Date().toISOString(),
@@ -193,27 +209,28 @@ export class CodeReviewsService {
 			const exclusions_service = new ExclusionsService();
 			const excluded_prs = await exclusions_service.get_excluded_set();
 
-			// Recalculate PR sizes from stored pull_requests
-			const pr_sizes = this.calculate_pr_sizes_from_stored(file_data.pull_requests, excluded_prs);
-
-			// Recalculate PR contributor stats from stored pull_requests
-			const pr_contributor_stats = this.calculate_pr_contributor_stats_from_stored(
-				file_data.pull_requests,
-				excluded_prs
+			// Recompute the PR-derived sections from stored PRs. Comments-received per
+			// PR is taken from the stored counts (exclusions don't change it), so the
+			// same metric functions can run without re-fetching raw comments. The
+			// review grid and reviewer stats can't be recomputed without raw reviews,
+			// so they keep their last-synced values (resolved fully by the Postgres
+			// migration, issue #4).
+			const dates = this.get_date_range();
+			const pr_records = file_data.pull_requests.map(record_from_stored);
+			const comments_by_pr = new Map(
+				file_data.pull_requests.map((pr) => [pr.number, pr.review_comments_count])
 			);
 
-			// For code reviews, we need to filter based on excluded PRs
-			// Since we don't store the PR number with each review, we'll recalculate
-			// by filtering the existing data based on excluded PR authors
-			const code_reviews = this.filter_code_reviews(
-				file_data.data,
-				file_data.pull_requests,
-				excluded_prs
+			const pr_sizes = calculate_pr_sizes(pr_records, excluded_prs, dates);
+			const pr_contributor_stats = calculate_contributor_stats(
+				pr_records,
+				comments_by_pr,
+				excluded_prs,
+				dates
 			);
 
 			const data: ICodeReviewsData = {
 				...file_data,
-				data: code_reviews,
 				pr_sizes: pr_sizes,
 				pr_contributor_stats: pr_contributor_stats
 			};
@@ -227,221 +244,59 @@ export class CodeReviewsService {
 		}
 	}
 
+	/** Normalize PR details into metric records, capturing the author's bot flag. */
+	private to_pr_records(prDetails: PullRequestDetail[]): PullRequestRecord[] {
+		return prDetails
+			.filter((pr) => pr.user?.login)
+			.map((pr) => ({
+				number: pr.number,
+				author: pr.user!.login,
+				author_is_bot: is_bot_user(pr.user),
+				title: pr.title,
+				html_url: pr.html_url,
+				additions: pr.additions ?? 0,
+				deletions: pr.deletions ?? 0,
+				created_at: pr.created_at,
+				merged_at: pr.merged_at,
+				state: pr.state as 'open' | 'closed'
+			}));
+	}
+
 	private extract_pr_info(
-		prDetails: PullRequestDetail[],
-		reviewCommentsMap: Map<number, number>
+		pr_records: PullRequestRecord[],
+		comments_by_pr: Map<number, number>
 	): IPullRequestInfo[] {
-		return prDetails.map((pr) => ({
+		return pr_records.map((pr) => ({
 			number: pr.number,
 			title: pr.title,
 			html_url: pr.html_url,
-			author: pr.user?.login ?? 'unknown',
-			additions: pr.additions ?? 0,
-			deletions: pr.deletions ?? 0,
+			author: pr.author,
+			author_is_bot: pr.author_is_bot,
+			additions: pr.additions,
+			deletions: pr.deletions,
 			created_at: pr.created_at,
 			merged_at: pr.merged_at,
-			state: pr.state as 'open' | 'closed',
-			review_comments_count: reviewCommentsMap.get(pr.number) ?? 0
+			state: pr.state,
+			review_comments_count: comments_by_pr.get(pr.number) ?? 0
 		}));
 	}
 
-	private calculate_pr_sizes(
-		prDetails: PullRequestDetail[],
-		excludedPRs: Set<number>
-	): Record<string, IPRSizeStats> {
-		const prsByAuthor: Record<string, number[]> = {};
-
-		for (const pr of prDetails) {
-			const author = pr.user?.login;
-			if (!author) {
-				console.log('Skipping PR with no author:', pr.number);
-				continue;
-			}
-
-			// Skip PRs closed without being merged
-			if (is_closed_unmerged(pr)) continue;
-
-			// Skip excluded PRs
-			if (excludedPRs.has(pr.number)) {
-				console.log(`Skipping excluded PR #${pr.number} by ${author}`);
-				continue;
-			}
-
-			const size = (pr.additions ?? 0) + (pr.deletions ?? 0);
-			console.log(
-				`PR #${pr.number} by ${author}: ${size} lines (${pr.additions} + ${pr.deletions})`
-			);
-
-			if (!prsByAuthor[author]) {
-				prsByAuthor[author] = [];
-			}
-			prsByAuthor[author].push(size);
-		}
-
-		return this.calculate_stats_from_sizes(prsByAuthor);
-	}
-
-	private calculate_pr_sizes_from_stored(
-		pullRequests: IPullRequestInfo[],
-		excludedPRs: Set<number>
-	): Record<string, IPRSizeStats> {
-		const prsByAuthor: Record<string, number[]> = {};
-
-		for (const pr of pullRequests) {
-			// Skip PRs closed without being merged
-			if (is_closed_unmerged(pr)) {
-				continue;
-			}
-
-			// Skip excluded PRs
-			if (excludedPRs.has(pr.number)) {
-				console.log(`Skipping excluded PR #${pr.number} by ${pr.author}`);
-				continue;
-			}
-
-			const size = pr.additions + pr.deletions;
-
-			if (!prsByAuthor[pr.author]) {
-				prsByAuthor[pr.author] = [];
-			}
-			prsByAuthor[pr.author].push(size);
-		}
-
-		return this.calculate_stats_from_sizes(prsByAuthor);
-	}
-
-	private calculate_stats_from_sizes(
-		prsByAuthor: Record<string, number[]>
-	): Record<string, IPRSizeStats> {
-		const result: Record<string, IPRSizeStats> = {};
-
-		for (const [author, sizes] of Object.entries(prsByAuthor)) {
-			if (sizes.length === 0) continue;
-
-			const min = Math.min(...sizes);
-			const max = Math.max(...sizes);
-			const avg = Math.round(sizes.reduce((sum, s) => sum + s, 0) / sizes.length);
-
-			result[author] = {
-				min,
-				max,
-				avg,
-				pr_count: sizes.length
-			};
-		}
-
-		return result;
-	}
-
-	private calculate_pr_contributor_stats_from_stored(
-		pullRequests: IPullRequestInfo[],
-		excludedPRs: Set<number>
-	): IPRContributorStats[] {
-		const dates = this.get_date_range();
-		const statsByAuthor = new Map<string, IPRContributorStats>();
-
-		for (const pr of pullRequests) {
-			const author = pr.author;
-			if (!author) continue;
-
-			// Skip PRs closed without being merged
-			if (is_closed_unmerged(pr)) continue;
-
-			// Skip excluded PRs
-			if (excludedPRs.has(pr.number)) continue;
-
-			const createdDate = pr.created_at.split('T')[0];
-
-			// Only count PRs created within our date range
-			if (createdDate < dates[0] || createdDate > dates[dates.length - 1]) continue;
-
-			if (!statsByAuthor.has(author)) {
-				const prsByDate: Record<string, number> = {};
-				dates.forEach((date) => (prsByDate[date] = 0));
-
-				statsByAuthor.set(author, {
-					author,
-					prs_by_date: prsByDate,
-					prs: [],
-					avg_days_to_merge: null,
-					avg_review_comments: 0,
-					total_prs: 0
-				});
-			}
-
-			const stats = statsByAuthor.get(author)!;
-
-			// Count PRs by date
-			if (stats.prs_by_date[createdDate] !== undefined) {
-				stats.prs_by_date[createdDate]++;
-			}
-
-			// Calculate days to merge or age for open PRs
-			let daysToMerge: number | null = null;
-			if (pr.merged_at) {
-				const created = new Date(pr.created_at);
-				const merged = new Date(pr.merged_at);
-				daysToMerge = Math.ceil((merged.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
-			} else if (pr.state === 'open') {
-				const created = new Date(pr.created_at);
-				const now = new Date();
-				daysToMerge = Math.ceil((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
-			}
-
-			stats.prs.push({
-				number: pr.number,
-				title: pr.title,
-				html_url: pr.html_url,
-				created_at: pr.created_at,
-				merged_at: pr.merged_at,
-				state: pr.state,
-				days_to_merge: daysToMerge,
-				review_comments_count: pr.review_comments_count
-			});
-
-			stats.total_prs++;
-		}
-
-		// Calculate averages for each author
-		for (const stats of statsByAuthor.values()) {
-			const prsWithMergeTime = stats.prs.filter((pr) => pr.days_to_merge !== null);
-			if (prsWithMergeTime.length > 0) {
-				const totalDays = prsWithMergeTime.reduce((sum, pr) => sum + (pr.days_to_merge ?? 0), 0);
-				stats.avg_days_to_merge = Math.round((totalDays / prsWithMergeTime.length) * 10) / 10;
-			}
-
-			const totalComments = stats.prs.reduce((sum, pr) => sum + pr.review_comments_count, 0);
-			stats.avg_review_comments =
-				stats.prs.length > 0 ? Math.round((totalComments / stats.prs.length) * 10) / 10 : 0;
-		}
-
-		// Sort by total PRs descending
-		return Array.from(statsByAuthor.values()).sort((a, b) => b.total_prs - a.total_prs);
-	}
-
-	private filter_code_reviews(
-		codeReviews: Record<string, Record<string, number>>,
-		pullRequests: IPullRequestInfo[],
-		excludedPRs: Set<number>
-	): Record<string, Record<string, number>> {
-		// Build a map of excluded PR authors
-		const excludedAuthors = new Set<string>();
-		for (const pr of pullRequests) {
-			if (excludedPRs.has(pr.number)) {
-				excludedAuthors.add(pr.author);
-			}
-		}
-
-		// If no PRs are excluded, return as-is
-		if (excludedAuthors.size === 0) {
-			return codeReviews;
-		}
-
-		// Note: This is a simplified approach. Since we don't track which reviews
-		// belong to which PRs, we cannot fully filter reviews on excluded PRs.
-		// The full filtering happens during sync when we have access to review data.
-		// For recalculation, we return the existing code reviews unchanged.
-		return codeReviews;
+	/** The comments feed: qualifying (in-window, non-self, non-bot) comments only. */
+	private build_comment_feed(comments: RawReviewComment[], dates: string[]): IReviewComment[] {
+		return comments
+			.filter((comment) => is_counted_comment(comment, dates))
+			.map((comment) => ({
+				id: comment.id,
+				pr_number: comment.pr_number,
+				pr_title: comment.pr_title,
+				pr_url: comment.pr_url,
+				author: comment.author,
+				body: comment.body,
+				path: comment.path,
+				line: comment.line,
+				created_at: comment.created_at,
+				html_url: comment.html_url
+			}));
 	}
 
 	private format_date_for_query(date: string) {
@@ -511,69 +366,28 @@ export class CodeReviewsService {
 		return allReviews;
 	};
 
-	private get_code_reviews = async (
-		excludedPRs: Set<number>,
-		prDetails: PullRequestDetail[]
-	): Promise<Record<string, Record<string, number>>> => {
-		try {
-			// First verify we have access to the repository
-			await this.verify_repository_access();
+	/** Fetch all reviews and normalize them into metric records. */
+	private fetch_review_records = async (
+		recentPRs: PullRequest[],
+		prAuthorMap: Map<number, string>
+	): Promise<ReviewRecord[]> => {
+		const allReviews = await this.fetch_reviews_in_parallel(recentPRs);
 
-			const dates = this.get_date_range();
-			const startDate = this.format_date_for_query(dates[0]);
-
-			console.log('Fetching PR reviews... This may take a moment...');
-
-			// Build a map of PR number to author for exclusion filtering
-			const prAuthorMap = new Map<number, string>();
-			for (const pr of prDetails) {
-				if (pr.user?.login) {
-					prAuthorMap.set(pr.number, pr.user.login);
-				}
-			}
-
-			// Get all PR reviews within the date range
-			const recentPRs = await this.get_recent_pull_requests(startDate);
-			const allReviews = await this.fetch_reviews_in_parallel(recentPRs);
-
-			// Filter reviews by date
-			const reviews = allReviews.filter((review: Review) => {
-				const reviewDate = new Date(review.submitted_at!);
-				return reviewDate >= new Date(startDate);
+		return allReviews
+			.filter((review) => review.user?.login)
+			.map((review) => {
+				const pr_number = review.pull_request_url
+					? parseInt(review.pull_request_url.split('/').pop() || '0')
+					: 0;
+				return {
+					pr_number,
+					pr_author: prAuthorMap.get(pr_number) ?? '',
+					reviewer: review.user!.login,
+					reviewer_is_bot: is_bot_user(review.user),
+					state: (review.state ?? '').toUpperCase(),
+					submitted_at: review.submitted_at ?? null
+				};
 			});
-
-			// Process reviews by user and date, excluding self-reviews
-			const userStats: Record<string, Record<string, number>> = {};
-
-			reviews.forEach((review: Review) => {
-				const reviewDate = review.submitted_at!.split('T')[0];
-				if (reviewDate >= dates[0] && reviewDate <= dates[this.numberOfDays - 1]) {
-					const username: string = review.user!.login;
-					const prNumber = review.pull_request_url
-						? parseInt(review.pull_request_url.split('/').pop() || '0')
-						: 0;
-
-					const prAuthor = prAuthorMap.get(prNumber);
-
-					// Skip self-reviews (reviews on the reviewer's own PR)
-					if (prAuthor === username) {
-						console.log(`Skipping self-review by ${username} on their own PR #${prNumber}`);
-						return;
-					}
-
-					if (!userStats[username]) {
-						userStats[username] = {};
-						dates.forEach((date) => (userStats[username][date] = 0));
-					}
-					userStats[username][reviewDate]++;
-				}
-			});
-
-			return userStats;
-		} catch (error: unknown) {
-			Logger.error(error);
-			throw error;
-		}
 	};
 
 	private get_date_range() {
@@ -638,20 +452,22 @@ export class CodeReviewsService {
 		return allDetails;
 	};
 
-	private fetch_review_comments_in_parallel = async (
-		prDetails: PullRequestDetail[]
-	): Promise<{ countMap: Map<number, number>; comments: IReviewComment[] }> => {
+	/**
+	 * Fetch all inline review comments and normalize them. Comments are kept raw
+	 * (including the PR author's own and bots); the metric functions apply the
+	 * self/bot/window filters so the rules can change without re-fetching.
+	 */
+	private fetch_review_comments = async (
+		prDetails: PullRequestDetail[],
+		prAuthorMap: Map<number, string>
+	): Promise<RawReviewComment[]> => {
 		const BATCH_SIZE = 10;
-		const reviewCommentsMap = new Map<number, number>();
-		const allReviewComments: IReviewComment[] = [];
-
-		console.log('Fetching review comments for PRs...');
+		const allComments: RawReviewComment[] = [];
 
 		for (let i = 0; i < prDetails.length; i += BATCH_SIZE) {
 			const batch = prDetails.slice(i, i + BATCH_SIZE);
 			const batchResults = await Promise.all(
 				batch.map(async (pr) => {
-					const prAuthor = pr.user?.login;
 					const comments = await this.octokit.paginate(this.octokit.rest.pulls.listReviewComments, {
 						owner: GITHUB_OWNER,
 						repo: GITHUB_REPO,
@@ -659,229 +475,32 @@ export class CodeReviewsService {
 						per_page: 100
 					});
 
-					// Filter to only comments from other devs (not the PR author)
-					const otherDevComments = comments.filter((comment) => comment.user?.login !== prAuthor);
-
-					// Extract full comment data
-					const extractedComments: IReviewComment[] = otherDevComments.map((comment) => ({
-						id: comment.id,
-						pr_number: pr.number,
-						pr_title: pr.title,
-						pr_url: pr.html_url,
-						author: comment.user?.login ?? 'unknown',
-						body: comment.body,
-						path: comment.path,
-						line: comment.line ?? comment.original_line ?? null,
-						created_at: comment.created_at,
-						html_url: comment.html_url
-					}));
-
-					return {
-						prNumber: pr.number,
-						count: otherDevComments.length,
-						comments: extractedComments
-					};
+					return comments
+						.filter((comment) => comment.user?.login)
+						.map(
+							(comment): RawReviewComment => ({
+								pr_number: pr.number,
+								pr_author: prAuthorMap.get(pr.number) ?? '',
+								author: comment.user!.login,
+								author_is_bot: is_bot_user(comment.user),
+								created_at: comment.created_at,
+								id: comment.id,
+								pr_title: pr.title,
+								pr_url: pr.html_url,
+								body: comment.body,
+								path: comment.path,
+								line: comment.line ?? comment.original_line ?? null,
+								html_url: comment.html_url
+							})
+						);
 				})
 			);
 
 			for (const result of batchResults) {
-				reviewCommentsMap.set(result.prNumber, result.count);
-				allReviewComments.push(...result.comments);
+				allComments.push(...result);
 			}
 		}
 
-		return { countMap: reviewCommentsMap, comments: allReviewComments };
+		return allComments;
 	};
-
-	private calculate_pr_contributor_stats(
-		prDetails: PullRequestDetail[],
-		reviewCommentsMap: Map<number, number>,
-		excludedPRs: Set<number>
-	): IPRContributorStats[] {
-		const dates = this.get_date_range();
-		const statsByAuthor = new Map<string, IPRContributorStats>();
-
-		for (const pr of prDetails) {
-			const author = pr.user?.login;
-			if (!author) continue;
-
-			// Skip PRs closed without being merged. prDetails already flows from a
-			// filtered list, but this keeps the invariant explicit at the call site.
-			if (is_closed_unmerged(pr)) continue;
-
-			// Skip excluded PRs
-			if (excludedPRs.has(pr.number)) continue;
-
-			const createdDate = pr.created_at.split('T')[0];
-
-			// Only count PRs created within our date range
-			if (createdDate < dates[0] || createdDate > dates[dates.length - 1]) continue;
-
-			if (!statsByAuthor.has(author)) {
-				const prsByDate: Record<string, number> = {};
-				dates.forEach((date) => (prsByDate[date] = 0));
-
-				statsByAuthor.set(author, {
-					author,
-					prs_by_date: prsByDate,
-					prs: [],
-					avg_days_to_merge: null,
-					avg_review_comments: 0,
-					total_prs: 0
-				});
-			}
-
-			const stats = statsByAuthor.get(author)!;
-
-			// Count PRs by date
-			if (stats.prs_by_date[createdDate] !== undefined) {
-				stats.prs_by_date[createdDate]++;
-			}
-
-			// Calculate days to merge or age for open PRs
-			let daysToMerge: number | null = null;
-			if (pr.merged_at) {
-				const created = new Date(pr.created_at);
-				const merged = new Date(pr.merged_at);
-				daysToMerge = Math.ceil((merged.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
-			} else if (pr.state === 'open') {
-				const created = new Date(pr.created_at);
-				const now = new Date();
-				daysToMerge = Math.ceil((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
-			}
-
-			const reviewComments = reviewCommentsMap.get(pr.number) ?? 0;
-
-			stats.prs.push({
-				number: pr.number,
-				title: pr.title,
-				html_url: pr.html_url,
-				created_at: pr.created_at,
-				merged_at: pr.merged_at,
-				state: pr.state as 'open' | 'closed',
-				days_to_merge: daysToMerge,
-				review_comments_count: reviewComments
-			});
-
-			stats.total_prs++;
-		}
-
-		// Calculate averages for each author
-		for (const stats of statsByAuthor.values()) {
-			const prsWithMergeTime = stats.prs.filter((pr) => pr.days_to_merge !== null);
-			if (prsWithMergeTime.length > 0) {
-				const totalDays = prsWithMergeTime.reduce((sum, pr) => sum + (pr.days_to_merge ?? 0), 0);
-				stats.avg_days_to_merge = Math.round((totalDays / prsWithMergeTime.length) * 10) / 10;
-			}
-
-			const totalComments = stats.prs.reduce((sum, pr) => sum + pr.review_comments_count, 0);
-			stats.avg_review_comments =
-				stats.prs.length > 0 ? Math.round((totalComments / stats.prs.length) * 10) / 10 : 0;
-		}
-
-		// Sort by total PRs descending
-		return Array.from(statsByAuthor.values()).sort((a, b) => b.total_prs - a.total_prs);
-	}
-
-	private async calculate_reviewer_stats(
-		recentPRs: PullRequest[],
-		prDetails: PullRequestDetail[]
-	): Promise<Record<string, IReviewerStats>> {
-		console.log('Calculating reviewer stats...');
-
-		// Build a map of PR number to author
-		const prAuthorMap = new Map<number, string>();
-		for (const pr of prDetails) {
-			if (pr.user?.login) {
-				prAuthorMap.set(pr.number, pr.user.login);
-			}
-		}
-
-		// Fetch all reviews
-		const allReviews = await this.fetch_reviews_in_parallel(recentPRs);
-
-		// Track unique PRs reviewed by each reviewer (excluding self-reviews)
-		const reviewerPRs = new Map<string, Set<number>>();
-
-		for (const review of allReviews) {
-			const reviewer = review.user?.login;
-			if (!reviewer) continue;
-
-			const prNumber = review.pull_request_url
-				? parseInt(review.pull_request_url.split('/').pop() || '0')
-				: 0;
-
-			const prAuthor = prAuthorMap.get(prNumber);
-
-			// Skip self-reviews
-			if (prAuthor === reviewer) continue;
-
-			if (!reviewerPRs.has(reviewer)) {
-				reviewerPRs.set(reviewer, new Set());
-			}
-			reviewerPRs.get(reviewer)!.add(prNumber);
-		}
-
-		// Fetch all review comments and count by reviewer (excluding self-comments)
-		const reviewerComments = new Map<string, number>();
-		const BATCH_SIZE = 10;
-
-		for (let i = 0; i < prDetails.length; i += BATCH_SIZE) {
-			const batch = prDetails.slice(i, i + BATCH_SIZE);
-			const batchResults = await Promise.all(
-				batch.map(async (pr) => {
-					const prAuthor = pr.user?.login;
-					const comments = await this.octokit.paginate(this.octokit.rest.pulls.listReviewComments, {
-						owner: GITHUB_OWNER,
-						repo: GITHUB_REPO,
-						pull_number: pr.number,
-						per_page: 100
-					});
-
-					// Count comments by each reviewer (excluding self-comments)
-					const commentsByReviewer = new Map<string, number>();
-					for (const comment of comments) {
-						const commenter = comment.user?.login;
-						if (!commenter || commenter === prAuthor) continue;
-
-						commentsByReviewer.set(commenter, (commentsByReviewer.get(commenter) || 0) + 1);
-					}
-
-					return commentsByReviewer;
-				})
-			);
-
-			// Aggregate comment counts
-			for (const commentMap of batchResults) {
-				for (const [reviewer, count] of commentMap) {
-					reviewerComments.set(reviewer, (reviewerComments.get(reviewer) || 0) + count);
-				}
-			}
-		}
-
-		// Build the reviewer stats
-		const result: Record<string, IReviewerStats> = {};
-
-		// Get all unique reviewers from both reviews and comments
-		const allReviewers = new Set([...reviewerPRs.keys(), ...reviewerComments.keys()]);
-
-		for (const reviewer of allReviewers) {
-			const reviewedPRs = reviewerPRs.get(reviewer);
-			const prsReviewed = reviewedPRs?.size || 0;
-			const totalComments = reviewerComments.get(reviewer) || 0;
-
-			result[reviewer] = {
-				reviewer,
-				total_prs_reviewed: prsReviewed,
-				total_review_comments: totalComments,
-				avg_comments_per_pr:
-					prsReviewed > 0 ? Math.round((totalComments / prsReviewed) * 10) / 10 : 0,
-				// Persist the distinct PR numbers so the team-wide distinct count can be
-				// computed as a union across only the currently-visible reviewers.
-				reviewed_pr_numbers: reviewedPRs ? [...reviewedPRs] : []
-			};
-		}
-
-		return result;
-	}
 }

@@ -10,6 +10,7 @@ import {
 	calculate_reviewer_stats,
 	calculate_pr_sizes,
 	calculate_contributor_stats,
+	record_from_stored,
 	type ReviewRecord,
 	type CommentRecord,
 	type PullRequestRecord
@@ -145,6 +146,46 @@ describe('days_to_merge', () => {
 	});
 	it('returns null for an open (never-merged) PR', () => {
 		expect(days_to_merge({ created_at: '2026-06-01T00:00:00Z', merged_at: null })).toBeNull();
+	});
+	it('rounds a sub-day merge up to 1, never 0', () => {
+		expect(
+			days_to_merge({ created_at: '2026-06-01T00:00:00Z', merged_at: '2026-06-01T00:00:05Z' })
+		).toBe(1);
+	});
+});
+
+describe('record_from_stored', () => {
+	it('defaults author_is_bot to false when absent on older stored PRs', () => {
+		const stored = {
+			number: 1,
+			title: 'PR',
+			html_url: 'https://example.com/1',
+			author: 'dev',
+			additions: 10,
+			deletions: 5,
+			created_at: IN,
+			merged_at: null,
+			state: 'open' as const,
+			review_comments_count: 0
+		};
+		expect(record_from_stored(stored).author_is_bot).toBe(false);
+	});
+
+	it('preserves author_is_bot when present', () => {
+		const stored = {
+			number: 2,
+			title: 'PR',
+			html_url: 'https://example.com/2',
+			author: 'sentry[bot]',
+			author_is_bot: true,
+			additions: 1,
+			deletions: 1,
+			created_at: IN,
+			merged_at: null,
+			state: 'open' as const,
+			review_comments_count: 0
+		};
+		expect(record_from_stored(stored).author_is_bot).toBe(true);
 	});
 });
 

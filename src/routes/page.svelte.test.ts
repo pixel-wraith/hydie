@@ -68,7 +68,7 @@ describe('/+page.svelte', () => {
 		});
 		expect(screen.getByText('Average PR Size (Lines Changed)')).toBeInTheDocument();
 		expect(
-			screen.getByText('PR size statistics for all PRs with activity in the last 14 days')
+			screen.getByText('PR size statistics for PRs opened (created) within the last 14 days')
 		).toBeInTheDocument();
 	});
 

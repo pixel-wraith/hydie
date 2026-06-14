@@ -82,7 +82,12 @@ export function is_bot_user(user: { login?: string | null; type?: string | null 
 	return /\[bot\]$/i.test(user.login ?? '');
 }
 
-/** Inclusive YYYY-MM-DD comparison of an ISO timestamp against the window edges. */
+/**
+ * Inclusive YYYY-MM-DD comparison of an ISO timestamp against the window edges.
+ * `dates` is assumed to be a consecutive, ascending run of days (as produced by
+ * the service's get_date_range), so a range check against the first/last entry
+ * is equivalent to set membership and avoids per-call Set construction.
+ */
 function date_in_window(iso: string | null, dates: string[]): boolean {
 	if (!iso || dates.length === 0) return false;
 	const day = iso.split('T')[0];
@@ -108,7 +113,11 @@ export function is_counted_comment(comment: CommentRecord, dates: string[]): boo
 	);
 }
 
-/** Days between creation and merge for a merged PR; null for anything not merged. */
+/**
+ * Days between creation and merge for a merged PR; null for anything not merged.
+ * Rounds UP to whole days, so any PR merged within its first 24 hours counts as
+ * 1 day (never 0) — a same-hour merge still represents a day's worth of cycle.
+ */
 export function days_to_merge(pr: { created_at: string; merged_at: string | null }): number | null {
 	if (!pr.merged_at) return null;
 	const created = new Date(pr.created_at).getTime();

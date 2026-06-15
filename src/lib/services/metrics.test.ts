@@ -11,6 +11,8 @@ import {
 	calculate_pr_sizes,
 	calculate_contributor_stats,
 	record_from_stored,
+	get_date_range,
+	prs_created_in_window,
 	type ReviewRecord,
 	type CommentRecord,
 	type PullRequestRecord
@@ -186,6 +188,42 @@ describe('record_from_stored', () => {
 			review_comments_count: 0
 		};
 		expect(record_from_stored(stored).author_is_bot).toBe(true);
+	});
+});
+
+describe('get_date_range', () => {
+	it('returns N consecutive ascending day strings ending today', () => {
+		const range = get_date_range(14, new Date('2026-06-14T12:00:00Z'));
+		expect(range).toHaveLength(14);
+		expect(range[0]).toBe('2026-06-01');
+		expect(range[13]).toBe('2026-06-14');
+	});
+});
+
+describe('prs_created_in_window', () => {
+	const window = ['2026-06-01', '2026-06-02', '2026-06-03'];
+
+	it('keeps only PRs created within the window', () => {
+		const prs = [
+			{ number: 1, created_at: '2026-06-02T10:00:00Z' },
+			{ number: 2, created_at: '2025-10-10T10:00:00Z' }, // ancient, merely active recently
+			{ number: 3, created_at: '2026-06-03T23:59:00Z' }
+		];
+		expect(prs_created_in_window(prs, window).map((p) => p.number)).toEqual([1, 3]);
+	});
+
+	it('excludes bot-authored PRs', () => {
+		const prs = [
+			{ number: 1, created_at: '2026-06-02T10:00:00Z', author_is_bot: true },
+			{ number: 2, created_at: '2026-06-02T10:00:00Z', author_is_bot: false }
+		];
+		expect(prs_created_in_window(prs, window).map((p) => p.number)).toEqual([2]);
+	});
+
+	it('keeps excluded PRs (the view shows them so they can be toggled)', () => {
+		// The helper does not take an exclusion set — excluded PRs remain visible.
+		const prs = [{ number: 99, created_at: '2026-06-01T00:00:00Z' }];
+		expect(prs_created_in_window(prs, window)).toHaveLength(1);
 	});
 });
 

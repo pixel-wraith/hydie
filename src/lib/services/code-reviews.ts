@@ -8,6 +8,7 @@ import {
 	is_bot_user,
 	is_closed_unmerged,
 	is_counted_comment,
+	get_date_range,
 	count_reviews_per_day,
 	count_comments_by_pr,
 	calculate_reviewer_stats,
@@ -391,13 +392,7 @@ export class CodeReviewsService {
 	};
 
 	private get_date_range() {
-		const dates = [];
-		for (let i = 0; i < this.numberOfDays; i++) {
-			const date = new Date();
-			date.setDate(date.getDate() - i);
-			dates.unshift(date.toISOString().split('T')[0]);
-		}
-		return dates;
+		return get_date_range(this.numberOfDays);
 	}
 
 	private verify_repository_access = async () => {

@@ -94,6 +94,39 @@ function date_in_window(iso: string | null, dates: string[]): boolean {
 	return day >= dates[0] && day <= dates[dates.length - 1];
 }
 
+/**
+ * The window of YYYY-MM-DD day strings ending today, oldest first. `now` is
+ * injectable so the window is deterministic in tests.
+ */
+export function get_date_range(numberOfDays = 14, now: Date = new Date()): string[] {
+	const dates: string[] = [];
+	for (let i = 0; i < numberOfDays; i++) {
+		const date = new Date(now);
+		date.setDate(date.getDate() - i);
+		dates.unshift(date.toISOString().split('T')[0]);
+	}
+	return dates;
+}
+
+/**
+ * PRs created within the window, authored by a human. This is the set the
+ * contributors view should show — matching the dashboard's "PRs created in the
+ * window" definition — rather than every PR merely *updated* in the window
+ * (which drags in ancient PRs that received recent activity). Excluded PRs are
+ * intentionally kept so the contributors view can still display/toggle them.
+ */
+export function prs_created_in_window<T extends { created_at: string; author_is_bot?: boolean }>(
+	prs: T[],
+	dates: string[]
+): T[] {
+	if (dates.length === 0) return [];
+	return prs.filter((pr) => {
+		if (pr.author_is_bot) return false;
+		const created = pr.created_at.split('T')[0];
+		return created >= dates[0] && created <= dates[dates.length - 1];
+	});
+}
+
 /** A review that counts: qualifying state, in window, not a self-review, not a bot. */
 export function is_counted_review(review: ReviewRecord, dates: string[]): boolean {
 	return (

@@ -265,7 +265,7 @@
 			<section class="pr-sizes-section">
 				<h2>Average PR Size (Lines Changed)</h2>
 				<p class="section-description">
-					PR size statistics for all PRs with activity in the last 14 days
+					PR size statistics for PRs opened (created) within the last 14 days
 				</p>
 
 				<div class="pr-sizes-table">

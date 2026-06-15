@@ -12,6 +12,9 @@ export interface IPullRequestInfo {
 	title: string;
 	html_url: string;
 	author: string;
+	// Whether the PR author is a bot. Optional for backwards compatibility with
+	// data.json written before bot exclusion existed; treated as false when absent.
+	author_is_bot?: boolean;
 	additions: number;
 	deletions: number;
 	created_at: string;

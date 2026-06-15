@@ -198,18 +198,37 @@ describe('get_date_range', () => {
 		expect(range[0]).toBe('2026-06-01');
 		expect(range[13]).toBe('2026-06-14');
 	});
+
+	it('returns a single day for numberOfDays = 1', () => {
+		expect(get_date_range(1, new Date('2026-06-14T12:00:00Z'))).toEqual(['2026-06-14']);
+	});
+
+	it('returns an empty array for numberOfDays = 0', () => {
+		expect(get_date_range(0, new Date('2026-06-14T12:00:00Z'))).toEqual([]);
+	});
 });
 
 describe('prs_created_in_window', () => {
 	const window = ['2026-06-01', '2026-06-02', '2026-06-03'];
 
-	it('keeps only PRs created within the window', () => {
+	it('keeps only PRs created within the window, inclusive of both edges', () => {
 		const prs = [
-			{ number: 1, created_at: '2026-06-02T10:00:00Z' },
+			{ number: 1, created_at: '2026-06-01T00:00:00Z' }, // first day (inclusive)
 			{ number: 2, created_at: '2025-10-10T10:00:00Z' }, // ancient, merely active recently
-			{ number: 3, created_at: '2026-06-03T23:59:00Z' }
+			{ number: 3, created_at: '2026-06-03T23:59:00Z' } // last day (inclusive)
 		];
 		expect(prs_created_in_window(prs, window).map((p) => p.number)).toEqual([1, 3]);
+	});
+
+	it('treats a missing author_is_bot (older stored data) as a human PR', () => {
+		const prs = [{ number: 1, created_at: '2026-06-02T10:00:00Z' }]; // author_is_bot absent
+		expect(prs_created_in_window(prs, window)).toHaveLength(1);
+	});
+
+	it('returns nothing when the window is empty', () => {
+		expect(prs_created_in_window([{ number: 1, created_at: '2026-06-02T10:00:00Z' }], [])).toEqual(
+			[]
+		);
 	});
 
 	it('excludes bot-authored PRs', () => {

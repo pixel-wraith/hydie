@@ -114,6 +114,10 @@ export function get_date_range(numberOfDays = 14, now: Date = new Date()): strin
  * window" definition — rather than every PR merely *updated* in the window
  * (which drags in ancient PRs that received recent activity). Excluded PRs are
  * intentionally kept so the contributors view can still display/toggle them.
+ *
+ * Unlike `contribution_prs`, this does not re-check closed-unmerged: those are
+ * already filtered out at sync time (get_recent_pull_requests) before reaching
+ * the stored list, so none can appear here.
  */
 export function prs_created_in_window<T extends { created_at: string; author_is_bot?: boolean }>(
 	prs: T[],

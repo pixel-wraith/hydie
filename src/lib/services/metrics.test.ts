@@ -190,6 +190,22 @@ describe('record_from_stored', () => {
 		};
 		expect(record_from_stored(stored).author_is_bot).toBe(true);
 	});
+
+	it('always marks stored PRs as non-draft (drafts are never stored)', () => {
+		const stored = {
+			number: 3,
+			title: 'PR',
+			html_url: 'https://example.com/3',
+			author: 'dev',
+			additions: 1,
+			deletions: 1,
+			created_at: IN,
+			merged_at: null,
+			state: 'open' as const,
+			review_comments_count: 0
+		};
+		expect(record_from_stored(stored).is_draft).toBe(false);
+	});
 });
 
 describe('get_date_range', () => {

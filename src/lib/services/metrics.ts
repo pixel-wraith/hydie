@@ -117,9 +117,12 @@ export function get_date_range(numberOfDays = 14, now: Date = new Date()): strin
  * (which drags in ancient PRs that received recent activity). Excluded PRs are
  * intentionally kept so the contributors view can still display/toggle them.
  *
- * Unlike `contribution_prs`, this does not re-check closed-unmerged: those are
- * already filtered out at sync time (get_recent_pull_requests) before reaching
- * the stored list, so none can appear here.
+ * Unlike `contribution_prs`, this does not re-check closed-unmerged or draft
+ * status: both are filtered out at sync time (get_recent_pull_requests) before
+ * reaching the stored list, and `IPullRequestInfo` carries no draft flag. The
+ * accepted trade-off (same as closed-unmerged) is that if an author converts an
+ * already-stored PR back to draft between syncs, the stale entry stays visible
+ * here until the next sync re-fetches and drops it.
  */
 export function prs_created_in_window<T extends { created_at: string; author_is_bot?: boolean }>(
 	prs: T[],

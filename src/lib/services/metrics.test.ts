@@ -73,6 +73,7 @@ function pr(over: Partial<PullRequestRecord> = {}): PullRequestRecord {
 		created_at: IN,
 		merged_at: null,
 		state: 'open',
+		is_draft: false,
 		...over
 	};
 }
@@ -325,11 +326,12 @@ describe('calculate_pr_sizes', () => {
 		expect(sizes['dev']).toEqual({ min: 100, max: 100, avg: 100, pr_count: 2 });
 	});
 
-	it('excludes closed-unmerged, excluded, and bot-authored PRs', () => {
+	it('excludes closed-unmerged, excluded, bot-authored, and draft PRs', () => {
 		const prs = [
 			pr({ number: 1, author: 'dev', state: 'closed', merged_at: null }), // closed-unmerged
 			pr({ number: 2, author: 'dev' }), // excluded by id
-			pr({ number: 3, author: 'bot', author_is_bot: true })
+			pr({ number: 3, author: 'bot', author_is_bot: true }),
+			pr({ number: 4, author: 'dev', is_draft: true }) // draft
 		];
 		expect(calculate_pr_sizes(prs, new Set([2]), DATES)).toEqual({});
 	});
@@ -374,6 +376,16 @@ describe('calculate_contributor_stats', () => {
 		const [stats] = calculate_contributor_stats(prs, counts, new Set(), DATES);
 		expect(stats.prs[0].review_comments_count).toBe(2);
 		expect(stats.avg_review_comments).toBe(2);
+	});
+
+	it('excludes draft PRs from contributor stats', () => {
+		const prs = [
+			pr({ number: 1, author: 'dev', created_at: '2026-06-05T00:00:00Z' }),
+			pr({ number: 2, author: 'dev', created_at: '2026-06-05T00:00:00Z', is_draft: true })
+		];
+		const [stats] = calculate_contributor_stats(prs, new Map(), new Set(), DATES);
+		expect(stats.total_prs).toBe(1);
+		expect(stats.prs.map((p) => p.number)).toEqual([1]);
 	});
 
 	it('buckets PRs by their creation date', () => {

@@ -259,7 +259,8 @@ export class CodeReviewsService {
 				deletions: pr.deletions ?? 0,
 				created_at: pr.created_at,
 				merged_at: pr.merged_at,
-				state: pr.state as 'open' | 'closed'
+				state: pr.state as 'open' | 'closed',
+				is_draft: pr.draft ?? false
 			}));
 	}
 
@@ -326,9 +327,10 @@ export class CodeReviewsService {
 					break;
 				}
 
-				// Exclude PRs that were closed without being merged so they never
-				// enter any downstream metric, the stored list, or the UI.
-				if (is_closed_unmerged(pr)) {
+				// Exclude closed-unmerged and draft PRs so neither ever enters a
+				// downstream metric, the stored list, or the UI. Drafts are
+				// work-in-progress, not real contributions or review targets.
+				if (is_closed_unmerged(pr) || pr.draft) {
 					continue;
 				}
 

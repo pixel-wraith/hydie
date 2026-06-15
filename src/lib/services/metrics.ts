@@ -25,6 +25,7 @@ import type {
  * - Bots are excluded from every metric by default.
  * - Avg days-to-merge is over merged PRs only; open PRs are never averaged in.
  * - PR sizes and contributor "total PRs" both measure PRs CREATED in the window.
+ * - Draft and closed-unmerged PRs are excluded from every metric.
  */
 
 /** Review states that count as having reviewed a PR. */
@@ -61,6 +62,7 @@ export interface PullRequestRecord {
 	created_at: string;
 	merged_at: string | null;
 	state: 'open' | 'closed';
+	is_draft: boolean;
 }
 
 /**
@@ -236,7 +238,7 @@ function contribution_prs(
 	dates: string[]
 ): PullRequestRecord[] {
 	return prs.filter((pr) => {
-		if (is_closed_unmerged(pr)) return false;
+		if (is_closed_unmerged(pr) || pr.is_draft) return false;
 		if (excluded.has(pr.number)) return false;
 		if (pr.author_is_bot) return false;
 		const created = pr.created_at.split('T')[0];
@@ -365,6 +367,8 @@ export function record_from_stored(pr: IPullRequestInfo): PullRequestRecord {
 		deletions: pr.deletions,
 		created_at: pr.created_at,
 		merged_at: pr.merged_at,
-		state: pr.state
+		state: pr.state,
+		// Drafts are filtered out at fetch time, so a stored PR is never a draft.
+		is_draft: false
 	};
 }

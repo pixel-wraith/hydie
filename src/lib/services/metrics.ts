@@ -25,6 +25,7 @@ import type {
  * - Bots are excluded from every metric by default.
  * - Avg days-to-merge is over merged PRs only; open PRs are never averaged in.
  * - PR sizes and contributor "total PRs" both measure PRs CREATED in the window.
+ * - Draft and closed-unmerged PRs are excluded from every metric.
  */
 
 /** Review states that count as having reviewed a PR. */
@@ -61,6 +62,7 @@ export interface PullRequestRecord {
 	created_at: string;
 	merged_at: string | null;
 	state: 'open' | 'closed';
+	is_draft: boolean;
 }
 
 /**
@@ -115,9 +117,12 @@ export function get_date_range(numberOfDays = 14, now: Date = new Date()): strin
  * (which drags in ancient PRs that received recent activity). Excluded PRs are
  * intentionally kept so the contributors view can still display/toggle them.
  *
- * Unlike `contribution_prs`, this does not re-check closed-unmerged: those are
- * already filtered out at sync time (get_recent_pull_requests) before reaching
- * the stored list, so none can appear here.
+ * Unlike `contribution_prs`, this does not re-check closed-unmerged or draft
+ * status: both are filtered out at sync time (get_recent_pull_requests) before
+ * reaching the stored list, and `IPullRequestInfo` carries no draft flag. The
+ * accepted trade-off (same as closed-unmerged) is that if an author converts an
+ * already-stored PR back to draft between syncs, the stale entry stays visible
+ * here until the next sync re-fetches and drops it.
  */
 export function prs_created_in_window<T extends { created_at: string; author_is_bot?: boolean }>(
 	prs: T[],
@@ -236,7 +241,7 @@ function contribution_prs(
 	dates: string[]
 ): PullRequestRecord[] {
 	return prs.filter((pr) => {
-		if (is_closed_unmerged(pr)) return false;
+		if (is_closed_unmerged(pr) || pr.is_draft) return false;
 		if (excluded.has(pr.number)) return false;
 		if (pr.author_is_bot) return false;
 		const created = pr.created_at.split('T')[0];
@@ -365,6 +370,8 @@ export function record_from_stored(pr: IPullRequestInfo): PullRequestRecord {
 		deletions: pr.deletions,
 		created_at: pr.created_at,
 		merged_at: pr.merged_at,
-		state: pr.state
+		state: pr.state,
+		// Drafts are filtered out at fetch time, so a stored PR is never a draft.
+		is_draft: false
 	};
 }
